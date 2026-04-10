@@ -122,6 +122,7 @@ def main():
                          , min_dist=MIN_DIST
                          , random_state=RANDOM_STATE
                          )
+    
 
 if __name__ == "__main__":
     main()
