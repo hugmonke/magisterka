@@ -133,7 +133,7 @@ def shannon_entropy(poinc_x: np.array, poinc_y: np.array, bins: int = 50, floor:
 # ------------------------------------------------------------
 # LYAPUNOV EXPONENT AND MODEL SOLUTION
 # ------------------------------------------------------------
-def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt: float = 0.01, t_skip: int = 50, t_end: int = 50, size: int = 1000, cutoff: int = 1e6):
+def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt: float = 0.01, t_skip: int = 50, t_end: int = 150, size: int = 1000, cutoff: int = 1e6):
     """Returns Largest Lyapunov Exponent (LLE).
 
     Args:
@@ -150,7 +150,7 @@ def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt
     N_skip = int(t_skip / dt)
     N_sim = int(t_end / dt)
 
-    x_arr, y_arr, z_arr = np.zeros((N_sim, size)), np.zeros((N_sim, size)), np.zeros((N_sim, size))
+    x_matrix, y_matrix, z_matrix = np.zeros((N_sim, size)), np.zeros((N_sim, size)), np.zeros((N_sim, size))
     epsilon = 1e-8
     x0, y0, z0 = np.full(size, init_xyz[0], dtype=float), np.full(size, init_xyz[1], dtype=float), np.full(size, init_xyz[2], dtype=float)
 
@@ -168,15 +168,17 @@ def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt
         
         for i in range(N_sim):
             x0, y0, z0 = runge_kutta(x=x0, y=y0, z=z0, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
-            x_arr[i, :], y_arr[i, :], z_arr[i, :] = x0, y0, z0
+            x_matrix[i, :], y_matrix[i, :], z_matrix[i, :] = x0, y0, z0
             is_safe = np.logical_and.reduce([np.abs(x0) < cutoff, np.abs(y0) < cutoff, np.logical_not(np.isnan(x0))])
             valid_mask = np.logical_and(valid_mask, is_safe)
             
             x1, y1, z1 = runge_kutta(x=x1, y=y1, z=z1, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
             dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
             d = np.sqrt(dx*dx + dy*dy + dz*dz)
+            
+            safe_d = np.where(np.logical_or.reduce([np.isnan(d), np.isinf(d)]), 1.0, d)
+            safe_d = np.where(safe_d == 0, 1e-16, safe_d)
 
-            safe_d = np.where(np.logical_or.reduce([(d == 0), np.isnan(d), np.isinf(d)]), 1.0, d)
             sum_log += np.where(valid_mask, np.log(safe_d / d0), 0.0)
             scale = np.where(safe_d > 0, d0/safe_d, 0.0)
 
@@ -184,7 +186,7 @@ def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt
             y1 = y0 + dy * scale 
             z1 = z0 + dz * scale
 
-    return sum_log / (N_sim * dt), valid_mask, x_arr, y_arr, z_arr
+    return sum_log / (N_sim * dt), valid_mask, x_matrix, y_matrix, z_matrix
 
 
 # ------------------------------------------------------------

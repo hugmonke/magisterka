@@ -103,7 +103,7 @@ def main():
             state = com.classify(entropy=entropy, lle=lle)
             success = True
             
-        print(f"Final State: {state} | Entropy: {entropy:.4f} | LLE: {lle:.4f}")
+        print(f"Classified State: {state} | Entropy: {entropy:.4f} | LLE: {lle:.4f}")
         with open("simulation_results.txt", "a", encoding="utf-8") as file:
             log_line = f"Classified State: {state:<14} | Actual State:          | Entropy: {entropy:.4f} | LLE: {lle:.4f} | Params: {{{param_string}}} | T_SKIP: {T_SKIP} | T_END: {T_END}\n"
             file.write(log_line)

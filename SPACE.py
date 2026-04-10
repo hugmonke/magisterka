@@ -12,52 +12,58 @@ import tomllib
 # ------------------------------------------------------------
 # DATA GENERATION
 # ------------------------------------------------------------
-def get_dataset(sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0, 0.0), params = None, dt = 0.01, t_skip = 50, t_end = 50, size = 1000, cutoff= 1e6):
+def get_dataset(sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0, 0.0), params = None, dt = 0.01, t_skip = 50, t_end = 150, size = 1000, cutoff= 1e6, batch_size = 1000):
     print(f"Running {sim_num} simulations to map parameter space")
     overflow_count = 0
     results = []
-    
-    params = com.get_parameteres(params=None, size=sim_num)
-    lle_all, valid_mask, x_all, y_all, z_all = com.solve_and_get_lle(init_xyz = init_xyz
-                                                                     , params = params
-                                                                     , dt = dt
-                                                                     , t_skip = t_skip
-                                                                     , t_end = t_end
-                                                                     , size = size
-                                                                     , cutoff= cutoff
-                                                                     )
-    print("Post-processing trajectories and calculating entropy, saving to sim_results_space.txt")
     with open("sim_results_space.txt", "a", encoding="utf-8") as file:
-        
-        for i in range(sim_num):
-            run_data = {param: val[i] for param, val in params.items()}
-            param_string = ", ".join([f"'{param}': {val}" for param, val in run_data.items()])
-            # Skip if the simulation exploded
-            if not valid_mask[i]:
-                overflow_count += 1
-                state = "DIVERGENT"
-                entropy = np.nan
-                lle = np.nan
-            else:
-                x, y, z = x_all[:, i], y_all[:, i], z_all[:, i]
-                lle = lle_all[i]
-                
-                z_mean = np.mean(z)
-                crossed = (z[:-1] - z_mean) * (z[1:] - z_mean) < 0
-                crossed_ind = np.where(crossed)[0] + 1
-                poinc_x = x[crossed_ind]
-                poinc_y = y[crossed_ind]
+        total_sim = 0
+        print("Post-processing trajectories and calculating entropy, saving to sim_results_space.txt")
+        while total_sim < sim_num:
 
-                entropy = com.shannon_entropy(poinc_x, poinc_y)
-                state = com.classify(entropy, lle)
+            cur_size = min(batch_size, sim_num - total_sim)
+            params = com.get_parameteres(params=None, size=cur_size)
+            lle_all, valid_mask, x_all, y_all, z_all = com.solve_and_get_lle(init_xyz = init_xyz
+                                                                            , params = params
+                                                                            , dt = dt
+                                                                            , t_skip = t_skip
+                                                                            , t_end = t_end
+                                                                            , size = cur_size
+                                                                            , cutoff= cutoff
+                                                                            )
+        
+            for i in range(cur_size):
+                no_trajectory = i + total_sim
+                run_data = {param: val[i] for param, val in params.items()}
+                param_string = ", ".join([f"'{param}': {val}" for param, val in run_data.items()])
+                # Skip if the simulation exploded
+                if not valid_mask[i]:
+                    overflow_count += 1
+                    state = "DIVERGENT"
+                    entropy = np.nan
+                    lle = np.nan
+                else:
+                    x, y, z = x_all[:, i], y_all[:, i], z_all[:, i]
+                    lle = lle_all[i]
                     
-                
-            run_data.update({"Entropy": entropy, "LLE": lle, "State": state})
-            results.append(run_data)
-            log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | T_SKIP: {t_skip} | T_END: {t_end}\n"
-            file.write(log_line)
-            if (i+1) % print_every == 0:
-                print(f"Run no. {i+1} ")
+                    z_mean = np.mean(z)
+                    crossed = (z[:-1] - z_mean) * (z[1:] - z_mean) < 0
+                    crossed_ind = np.where(crossed)[0] + 1
+                    poinc_x = x[crossed_ind]
+                    poinc_y = y[crossed_ind]
+
+                    entropy = com.shannon_entropy(poinc_x, poinc_y)
+                    state = com.classify(entropy, lle)
+                        
+                    
+                run_data.update({"Entropy": entropy, "LLE": lle, "State": state})
+                results.append(run_data)
+                log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | T_SKIP: {t_skip} | T_END: {t_end}\n"
+                file.write(log_line)
+                if (no_trajectory+1) % print_every == 0:
+                    print(f"Run no. {no_trajectory+1} ")
+            
+            total_sim += cur_size
 
     print(f"Total successful runs: {len(results)}")
     print(f"Total exploded (error) runs: {overflow_count}")
@@ -141,10 +147,11 @@ def main():
     INIT_XYZ        = config.get("INIT_XYZ", [0.1, 0.0, 0.0])
     DT              = config.get("DT", 0.01)
     T_SKIP          = config.get("T_SKIP", 100)
-    T_END           = config.get("T_END", 1_000)
+    T_END           = config.get("T_END", 1000)
     CUTOFF          = config.get("CUTOFF", 1e6)
     SIM_NUM         = config.get("SIM_NUM", 1_000)
     PRINT_EVERY     = config.get("PRINT_EVERY", 50) 
+    BATCH_SIZE      = config.get("BATCH_SIZE", 1000) 
     
     # UMAP PARAMETERS:
     N_NEIGHBORS     = config.get("N_NEIGHBORS", 15) # n_neighbors controls how UMAP balances local vs global structure.
@@ -163,7 +170,8 @@ def main():
                     , t_skip = T_SKIP
                     , t_end = T_END
                     , size = SIM_NUM
-                    , cutoff= CUTOFF
+                    , cutoff = CUTOFF
+                    , batch_size= BATCH_SIZE
                     )
     
     if dataset.empty or len(dataset['State'].unique()) < 2:
