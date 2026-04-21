@@ -46,10 +46,10 @@ def cost_function(target_featuers, param_array, param_names, dt, t_skip, t_end):
         
     # PERIODICITY CHECK
     z_mean = np.mean(z_array)
-    crossed_up = (z_array[:-1] <= z_mean) & (z_array[1:] > z_mean)
-    crossed_ind = np.where(crossed_up)[0]
-    if len(crossed_ind) < 2: return 1e6 # Penalty: Not oscillating
-    poinc_x = x_array[crossed_ind] # X-coords at crossing points
+    has_crossed = (z_array[:-1] <= z_mean) & (z_array[1:] > z_mean)
+    where_crossed = np.where(has_crossed)[0]
+    if len(where_crossed) < 2: return 1e6 
+    poinc_x = x_array[where_crossed] # X-coords at crossing points
     amplitude_x = np.max(x_array) - np.min(x_array)
     periodicity_error = np.std(poinc_x) / (amplitude_x + 1e-6) # normalized variance of crossings
     
