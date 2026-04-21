@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import common as com 
+import COMMON as com 
 import tomllib
 # ------------------------------------------------------------
 # POINCARÉ MAP
@@ -9,7 +9,6 @@ def generate_plane(point, normal):
     point = np.array(point)
     normal = np.array(normal)
     normal = normal / np.linalg.norm(normal)  # normalize
-
     a, b, c = normal
     d = -np.dot(normal.T, point.T)
 
@@ -42,9 +41,7 @@ def poincare_map(x, y, z, plane):
 
 
 def plot_poincare_plane(ax, plane, x, y, z, alpha=0.2):
-    
     a, b, c, d = plane
-
     grid_size = 50
     x_range = np.linspace(min(x), max(x), grid_size)
     y_range = np.linspace(min(y), max(y), grid_size)
@@ -75,6 +72,7 @@ def main():
     CUTOFF      = config.get("CUTOFF", 1e6)
     SIZE        = config.get("SIZE", 1)
     PARAMS_LIST = config.get("SAVED_PARAMS", [{}])
+
     for PARAMS in PARAMS_LIST:
         success = False
         while not success:
@@ -87,20 +85,24 @@ def main():
                                                             , size = SIZE
                                                             , cutoff= CUTOFF
                                                             )
+            
             if not valid_mask[0]: print("System diverged. Retrying with new parameters."); continue
-
             params = {param: val[0] for param, val in params.items()}
             param_string = ", ".join([f"'{param}': {val}" for param, val in params.items()])
             print("Parameters:", param_string)
+
             alpha, mu = params["alpha"], params["mu"]
             gamma, p, s = params["gamma"], params["p"], params["s"]
             x, y, z, lle = x[:, 0], y[:, 0], z[:, 0], lle[0]
+
             mean_x, mean_y, mean_z = np.mean(x), np.mean(y), np.mean(z)
             dx0, dy0, dz0 = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
             plane = generate_plane(point=(mean_x, mean_y, mean_z), normal=(dx0, dy0, dz0))
             poinc_x, poinc_y, poinc_z = poincare_map(x=x, y=y, z=z, plane=plane)
+
             entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y, bins=50, floor=10)
             state = com.classify(entropy=entropy, lle=lle)
+
             success = True
             
         print(f"Classified State: {state} | Entropy: {entropy:.4f} | LLE: {lle:.4f}")
@@ -121,7 +123,8 @@ def main():
         ax1.set_title("Time Series x(t)")
         ax1.set_xlabel('t')
         ax1.set_ylabel('x')
-
+        ax1.set_xlim(T_END - 20, T_END)
+        ax1.invert_yaxis()
         # Phase Space
         ax2 = fig.add_subplot(223, projection='3d')
         ax2.scatter(x[0], y[0], z[0], color='green', s=40, zorder=5, label='Start')
@@ -151,44 +154,5 @@ def main():
         
         plt.tight_layout()
         plt.show()
-# ------------------------------------------------------------
-# MAIN RUN
-# ------------------------------------------------------------
+
 if __name__ == "__main__": main()
-    
-
-
-# ------------------------------------------------------------
-# HEATMAP
-# ------------------------------------------------------------
-# def entropy_heatmap():
-#     alpha_vals = np.linspace(-1.5, 0.5, 20)
-#     p_vals = np.linspace(1.0, 5.0, 20)
-
-#     heatmap = np.zeros((len(alpha_vals), len(p_vals)))
-
-#     for i, a in enumerate(alpha_vals):
-#         for j, p in enumerate(p_vals):
-#             params = model_parameteres()
-#             params["alpha"] = a
-#             params["p"] = p
-
-#             _, x, y, z = runge_kutta(params, t_end=100)
-#             plane = generate_plane(x[0], y[0], z[0])
-#             poinc_x, poinc_z = poincare_map(x, y, z, plane)
-
-#             heatmap[i,j] = shannon_entropy(poinc_x, poinc_z)
-
-
-#     plt.figure()
-#     plt.imshow(heatmap, origin='lower', aspect='auto',
-#                extent=[p_vals[0], p_vals[-1], alpha_vals[0], alpha_vals[-1]])
-#     plt.colorbar(label="Entropy")
-#     plt.xlabel("p")
-#     plt.ylabel("alpha")
-#     plt.title("Entropy Heatmap")z
-#     plt.show()
-
-
-# Run heatmap
-# entropy_heatmap()
