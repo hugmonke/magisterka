@@ -1,7 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Sequence
-import warnings
 from numba import njit
 from sklearn.preprocessing import StandardScaler
 import umap
@@ -26,20 +24,57 @@ def get_parameteres(params: dict = None, size: int = 1000):
     """
     if params == None or params == {}:
         params = {
-                "alpha": np.random.uniform(-2, 2, size=size)
-                ,"mu": np.random.uniform(-1, 1, size=size)
-                ,"gamma": np.random.uniform(0.1, 3, size=size)
+                "alpha": np.random.uniform(-2, 10, size=size)
+                ,"mu": np.random.uniform(-1, 10, size=size)
+                ,"gamma": np.random.uniform(0.1, 5, size=size)
                 ,"p": np.random.uniform(0, 5, size=size)
-                ,"s": np.random.uniform(0.5, 2, size=size)
+                ,"s": np.random.uniform(0, 5, size=size)
                 }
     else:
         params = {param: np.array([val]) for param, val in params.items()}
     return params
 
+# ------------------------------------------------------------
+# POINCARÉ MAP
+# ------------------------------------------------------------
+def generate_plane(point, normal):
+    point = np.array(point)
+    normal = np.array(normal)
+    normal = normal / np.linalg.norm(normal)  # normalize
+    a, b, c = normal
+    d = -np.dot(normal.T, point.T)
+
+    return a, b, c, d
+
+
+def poincare_map(x, y, z, plane):
+    a, b, c, d = plane
+    def plane_eq(x, y, z): 
+        return a*x + b*y + c*z + d
+    poinc_x = []
+    poinc_y = [] 
+    poinc_z = []
+
+    for i in range(1, len(x)):
+        f_prev = plane_eq(x[i-1], y[i-1], z[i-1])
+        f_curr = plane_eq(x[i], y[i], z[i])
+
+        # count BOTH upward and downward crossings
+        if (f_prev < 0 and f_curr >= 0) or (f_prev > 0 and f_curr <= 0):
+            t_cross = abs(f_prev)/(abs(f_prev)+abs(f_curr))
+            xi = x[i-1] + t_cross*(x[i]-x[i-1])
+            yi = y[i-1] + t_cross*(y[i]-y[i-1])
+            zi = z[i-1] + t_cross*(z[i]-z[i-1])
+            poinc_x.append(xi)
+            poinc_y.append(yi)
+            poinc_z.append(zi)
+
+    return np.array(poinc_x), np.array(poinc_y), np.array(poinc_z)
 
 # ------------------------------------------------------------
 # MODEL
 # ------------------------------------------------------------
+@njit
 def get_derivatives(x: np.array, y: np.array, z: np.array, alpha: float, mu: float, gamma: float, p: float, s: float):
     """Gets model derivatives.
 
@@ -74,7 +109,7 @@ def get_derivatives(x: np.array, y: np.array, z: np.array, alpha: float, mu: flo
 # ------------------------------------------------------------
 # RK4 SOLVER
 # ------------------------------------------------------------
-#@njit
+@njit
 def runge_kutta(x: float = 0.1, y: float = 0.0, z: float = 0.0, dt: float = 0.01, alpha=0.0, mu=0.0, gamma=0.0, p=0.0, s=0.0):
     """Gets x, y, z at next timestep.
 
@@ -113,7 +148,7 @@ def runge_kutta(x: float = 0.1, y: float = 0.0, z: float = 0.0, dt: float = 0.01
 # ------------------------------------------------------------
 # ENTROPY
 # ------------------------------------------------------------
-def shannon_entropy(poinc_x: np.array, poinc_y: np.array, bins: int = 50, floor: int = 10):
+def shannon_entropy(poinc_x: np.array, poinc_y: np.array, bins: int = 200, floor: int = 10):
     """Calculates entropy of points crossing the Poincare map.
 
     Args:
@@ -152,17 +187,25 @@ def get_fourier_features(x_array, dt):
     A_1 = amps[idx_1]
     phi_1 = phases[idx_1]
     
-    if A_1 < 1e-10: return None # 1e-10 allows small wave survival
+    if A_1 < 1e-10: return None
         
     # HARMONIC
-    idx_2 = np.argmin(np.abs(freqs - 2 * f_1))
+    idx_2 = np.argmin(np.abs(freqs - 2*f_1))
     A_2 = amps[idx_2]
     phi_2 = phases[idx_2]
     
     R21 = A_2 / A_1
-    phi21 = (phi_2 - 2 * phi_1) % (2 * np.pi)
+    phi21 = (phi_2 - 2*phi_1) % (2*np.pi)
     
-    return {"R21": R21, "phi21": phi21}
+
+    idx_3 = np.argmin(np.abs(freqs - 3*f_1))
+    A_3 = amps[idx_3]
+    phi_3 = phases[idx_3]
+    
+    R31 = A_3 / A_1
+    phi31 = (phi_3 - 3*phi_1) % (2*np.pi)
+    
+    return {"R21": R21, "phi21": phi21, "R31": R31, "phi31": phi31}
 
 
 
@@ -193,34 +236,33 @@ def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt
     alpha, mu = params["alpha"], params["mu"]
     gamma, p, s = params["gamma"], params["p"], params["s"]
 
-    with np.errstate(all='ignore'):
-        for _ in range(N_skip):
-            x0, y0, z0 = runge_kutta(x=x0, y=y0, z=z0, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+    for _ in range(N_skip):
+        x0, y0, z0 = runge_kutta(x=x0, y=y0, z=z0, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
 
-        x1, y1, z1 = x0 + epsilon, y0, z0
-        d0 = epsilon
-        sum_log = np.zeros(size)
-        valid_mask = np.ones(size, dtype=bool)
+    x1, y1, z1 = x0 + epsilon, y0, z0
+    d0 = epsilon
+    sum_log = np.zeros(size)
+    valid_mask = np.ones(size, dtype=bool)
+    
+    for i in range(N_sim):
+        x0, y0, z0 = runge_kutta(x=x0, y=y0, z=z0, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+        x_matrix[i, :], y_matrix[i, :], z_matrix[i, :] = x0, y0, z0
+        is_safe = np.logical_and.reduce([np.abs(x0) < cutoff, np.abs(y0) < cutoff, np.logical_not(np.isnan(x0))])
+        valid_mask = np.logical_and(valid_mask, is_safe)
         
-        for i in range(N_sim):
-            x0, y0, z0 = runge_kutta(x=x0, y=y0, z=z0, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
-            x_matrix[i, :], y_matrix[i, :], z_matrix[i, :] = x0, y0, z0
-            is_safe = np.logical_and.reduce([np.abs(x0) < cutoff, np.abs(y0) < cutoff, np.logical_not(np.isnan(x0))])
-            valid_mask = np.logical_and(valid_mask, is_safe)
-            
-            x1, y1, z1 = runge_kutta(x=x1, y=y1, z=z1, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
-            dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
-            d = np.sqrt(dx*dx + dy*dy + dz*dz)
-            
-            safe_d = np.where(np.logical_or.reduce([np.isnan(d), np.isinf(d)]), 1.0, d)
-            safe_d = np.where(safe_d == 0, 1e-16, safe_d)
+        x1, y1, z1 = runge_kutta(x=x1, y=y1, z=z1, dt=dt, alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+        dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+        d = np.sqrt(dx*dx + dy*dy + dz*dz)
+        
+        safe_d = np.where(np.logical_or.reduce([np.isnan(d), np.isinf(d)]), 1.0, d)
+        safe_d = np.where(safe_d == 0, 1e-16, safe_d)
 
-            sum_log += np.where(valid_mask, np.log(safe_d / d0), 0.0)
-            scale = np.where(safe_d > 0, d0/safe_d, 0.0)
+        sum_log += np.where(valid_mask, np.log(safe_d / d0), 0.0)
+        scale = np.where(safe_d > 0, d0/safe_d, 0.0)
 
-            x1 = x0 + dx * scale 
-            y1 = y0 + dy * scale 
-            z1 = z0 + dz * scale
+        x1 = x0 + dx * scale 
+        y1 = y0 + dy * scale 
+        z1 = z0 + dz * scale
 
     return sum_log / (N_sim * dt), valid_mask, x_matrix, y_matrix, z_matrix
 
@@ -238,39 +280,20 @@ def classify(entropy: float, lle: float):
     Returns:
         str: Model's Dynamical Regime.
     """
-    # STABLE: LLE is definitively negative. 
-    # (We ignore Entropy as it might be inflated by transient spirals)
     if lle < -0.01:
         return "STABLE"
-        
-    # Crossed the plane less than 10 times
-    elif entropy == -1:
-        # DIVERGENT: If LLE is mathematically flat, it is flying off in a straight line
-        if lle < 0.001:
-            return "DIVERGENT"
-        # QUASI PERIODIC: If LLE is slightly positive, its probably quasi periodic
-        elif lle < 0.05:
-            return "QUASI_PERIODIC" 
-        else:
-        # CHAOTIC: If LLE very positive and there is some entropy
-            return "CHAOTIC"
-            
-    # PERIODIC: LLE is near zero, but enough points for entropy (>0)
-    elif lle < 0.005:
-        return "PERIODIC"
-        
-    # QUASI-PERIODIC: If LLE is slightly positive, 
-    # but the Poincare map shows big entropy (e.g due to a big ring)
-    elif lle < 0.05:
-        if entropy > 0.4:
-            return "QUASI_PERIODIC"
-        else:
-            # PERIODIC: If LLE is slightly positive, but entropy is low
-            return "PERIODIC"
-            
-    # CHAOTIC: If LLE is very positive
-    else:
+
+    if entropy == -1 or (entropy > 0.45 and lle < 0.03):
+        return "DIVERGENT"
+
+    if lle > 0.05 and entropy > 0.35:
         return "CHAOTIC"
+
+    else: # lle < 0.01
+        if entropy < 0.35:
+            return "PERIODIC"
+        else:
+            return "QUASI_PERIODIC"
     
 def plot_parameter_space(df_params, df_states, n_neighbors, min_dist, random_state):
     """Scaling, UMAP dimensionality reduction and UMAP plotting."""
@@ -329,7 +352,7 @@ def plot_fourier_space(dataset, target_R21, target_phi21, model_label, star_labe
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.scatter(df_periodic['phi21'], df_periodic['R21'], c='blue', alpha=0.3, s=10, label=model_label) # theoretically possible points
-    ax.scatter(target_phi21, target_R21, c='red', marker='*', s=100, edgecolor='black', label=star_label) # Target Star
+    ax.scatter(target_phi21, target_R21, c='red', marker='*', s=50, edgecolor='black', label=star_label) # Target Star
     
     plt.title("Fourier Space with Target Star")
     plt.xlabel(r"Phase Difference $\phi_{21}$ (radians)")

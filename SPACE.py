@@ -1,42 +1,9 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
-import plotly.express as px
-import umap
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 import COMMON as com 
 import tomllib
-from scipy.fft import rfft, rfftfreq
-
-def get_fourier_features(x_array, dt):
-    """Performs FFT on the simulated trajectory to extract R21 and phi21."""
-
-    N = len(x_array)
-    x_centered = x_array - np.mean(x_array) # center wave
-    fft_vals = rfft(x_centered)
-    amps = np.abs(fft_vals)/N
-    phases = np.angle(fft_vals)
-    freqs = rfftfreq(N, dt)
-    
-    # FUNDAMENTAL FREQUENCY
-    idx_1 = np.argmax(amps[1:]) + 1
-    f_1 = freqs[idx_1]
-    A_1 = amps[idx_1]
-    phi_1 = phases[idx_1]
-    
-    if A_1 < 1e-10: return None # 1e-10 allows small wave survival
-        
-    # HARMONIC
-    idx_2 = np.argmin(np.abs(freqs - 2 * f_1))
-    A_2 = amps[idx_2]
-    phi_2 = phases[idx_2]
-    
-    R21 = A_2 / A_1
-    phi21 = (phi_2 - 2 * phi_1) % (2 * np.pi)
-    
-    return {"R21": R21, "phi21": phi21}
 
 
 # ------------------------------------------------------------
@@ -67,40 +34,47 @@ def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0
                 no_trajectory = i + total_sim
                 run_data = {param: val[i] for param, val in params.items()}
                 param_string = ", ".join([f"'{param}': {val}" for param, val in run_data.items()])
-                # Skip if the simulation exploded
+                R21, PHI21, R31, PHI31 = np.nan, np.nan, np.nan, np.nan
                 if not valid_mask[i]:
                     overflow_count += 1
                     state = "DIVERGENT"
-                    entropy = np.nan
+                    entropy = -1.0
                     lle = np.nan
                 else:
                     x, y, z = x_all[:, i], y_all[:, i], z_all[:, i]
                     lle = lle_all[i]
                     
-                    z_mean = np.mean(z)
-                    crossed = (z[:-1] - z_mean) * (z[1:] - z_mean) < 0
-                    crossed_ind = np.where(crossed)[0] + 1
-                    poinc_x = x[crossed_ind]
-                    poinc_y = y[crossed_ind]
+                    alpha, mu = run_data['alpha'], run_data['mu']
+                    gamma, p, s = run_data['gamma'], run_data['p'], run_data['s']
+                    
+                    mean_pos = (np.mean(x), np.mean(y), np.mean(z))
+                    v_vec = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+                    plane = com.generate_plane(point=mean_pos, normal=v_vec)
+                    poinc_x, poinc_y, _ = com.poincare_map(x=x, y=y, z=z, plane=plane)
 
                     entropy = com.shannon_entropy(poinc_x, poinc_y)
                     state = com.classify(entropy, lle)
                     
-                    R21, PHI21 = np.nan, np.nan # Default
+                    half_idx = len(x)//2 
+                    drift_ratio = abs(np.mean(x[:half_idx]) - np.mean(x[half_idx:])) / (np.max(x) - np.min(x) + 1e-9)
                     
-                    if state == "PERIODIC":
-                        # Double check if PERIODIC, not DIVERGENT (The wave doesnt run away)
-                        drift_threshold = 0.05 # Chosen arbitrally, works best, allows some numerical errors
-                        half_idx = len(x)//2 
-                        drift_ratio = abs(np.mean(x[:half_idx]) - np.mean(x[half_idx:])) / (np.max(x) - np.min(x) + 1e-9)
-                        if drift_ratio < drift_threshold: 
-                            features = get_fourier_features(x, dt=dt) 
-                            if features: R21, PHI21 = features["R21"], features["phi21"]
-                            else: state = "DIVERGENT"
+                    amp_start = np.max(x[:half_idx]) - np.min(x[:half_idx])
+                    amp_end = np.max(x[half_idx:]) - np.min(x[half_idx:])
+                    amp_growth = abs(amp_end - amp_start) / (amp_start + 1e-9)
                     
-                run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21})
+                    if drift_ratio >= 0.05 or amp_growth >= 0.05: 
+                        state = "DIVERGENT"
+                    elif state == "PERIODIC":
+                        features = com.get_fourier_features(x, dt=dt) 
+                        if features: 
+                            R21, PHI21 = features["R21"], features["phi21"]
+                            R31, PHI31 = features["R31"], features["phi31"]
+                        else: 
+                            state = "DIVERGENT"
+                    
+                run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
                 results.append(run_data)
-                log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | R21: {R21:>6.3f} | phi21: {PHI21:>6.3f} | T_SKIP: {t_skip} | T_END: {t_end}\n"
+                log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | R21: {R21:>6.3f} | phi21: {PHI21:>6.3f} | R31: {R31:>6.3f} | phi31: {PHI31:>6.3f} | T_SKIP: {t_skip} | T_END: {t_end}\n"
                 file.write(log_line)
                 if (no_trajectory+1) % print_every == 0:
                     print(f"Run no. {no_trajectory+1} ")
@@ -165,11 +139,6 @@ def main():
     PLOT_FOURIER_SPACE = True
     TRAIN_CLASSIFIER = False
 
-    # FOURIER SPACE PARAMETERS
-    TARGET_R21 = 0.545
-    TARGET_PHI21 = 4.395 
-    MODEL_LABEL = 'Tanaka-Takeuti Model'
-    STAR_LABEL = 'OGLE-LMC-RRLYR-00001'
 
     dataset = get_dataset(filename=FILENAME
                         , sim_num = SIM_NUM
@@ -208,14 +177,6 @@ def main():
                              , min_dist=MIN_DIST
                              , random_state=RANDOM_STATE
                              )
-
-    if PLOT_FOURIER_SPACE:
-        com.plot_fourier_space(dataset
-                           , target_R21=TARGET_R21
-                           , target_phi21=TARGET_PHI21
-                           , model_label=MODEL_LABEL
-                           , star_label=STAR_LABEL
-                           )
     
     if TRAIN_CLASSIFIER:
         train_rf_classifier(df_params=df_params

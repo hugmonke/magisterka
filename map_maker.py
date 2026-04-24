@@ -1,8 +1,5 @@
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
-import umap
-from sklearn.preprocessing import StandardScaler
 import tomllib
 import ast
 import re
@@ -17,21 +14,22 @@ def check_missing_cols(dataset, param_arr):
         return
     
 
-def print_and_save_neighbours(dataset, param_arr, R21, phi21):
+def print_and_save_neighbours(dataset, param_arr, star_label, R21, phi21, R31=0, phi31=0,TOP_N=1):
     df_periodic = dataset[(dataset['State'] == 'PERIODIC') & (dataset['R21'].notna())].copy()
     if not df_periodic.empty:
         df_periodic['FOURIER_DIST'] = \
             np.sqrt(
             (df_periodic['R21'] - R21)**2 + 
-            ((df_periodic['phi21'] - phi21) / (2*np.pi))**2
+            ((df_periodic['phi21'] - phi21) / (2*np.pi))**2 +
+            (df_periodic['R31'] - R31)**2 + 
+            ((df_periodic['phi31'] - phi31) / (2*np.pi))**2
             )
-        
-        TOP_N = 3
+
         best_matches = df_periodic.sort_values('FOURIER_DIST').head(TOP_N)
         with open("config.toml", "a", encoding="utf-8") as config:
-            for i in range(TOP_N):
-                match = best_matches.iloc[0]
-                config.write(f"\n[[SAVED_PARAMS]] # TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
+            for i in range(len(best_matches)):
+                match = best_matches.iloc[i]
+                config.write(f"\n[[SAVED_PARAMS]] # TARGET: {star_label} | TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
                 for j in param_arr:
                     config.write(f"{j} = {match[j]}\n")
 
@@ -40,7 +38,7 @@ def print_and_save_neighbours(dataset, param_arr, R21, phi21):
         print(f"{TOP_N} NEAREST NEIGHBOUR PARAMS SAVED TO CONFIG\n")
 
 
-def parse_log_file(filepath="sim_results_space.txt"):
+def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
     """Reads the simulation log and extracts parameters, states, and Fourier features."""
     print(f"Reading data from {filepath}")
     if not os.path.exists(filepath):
@@ -56,20 +54,27 @@ def parse_log_file(filepath="sim_results_space.txt"):
             state_match = re.search(r"Classified State:\s*([A-Z_]+)", line)
             params_match = re.search(r"Params:\s*(\{.*?\})", line)
         
-            r21_match = re.search(r"R21:\s*([^\s\|]+)", line)
+            R21_match = re.search(r"R21:\s*([^\s\|]+)", line)
             phi21_match = re.search(r"phi21:\s*([^\s\|]+)", line)
             
+            R31_match = re.search(r"R31:\s*([^\s\|]+)", line)
+            phi31_match = re.search(r"phi31:\s*([^\s\|]+)", line)
+
             if state_match and params_match:
                 state = state_match.group(1)
                 params_str = params_match.group(1)
                 try:
                     params_dict = ast.literal_eval(params_str)
                     params_dict['State'] = state
-                    if r21_match and phi21_match:
-                        r21_val = r21_match.group(1)
+                    if R21_match and phi21_match:
+                        R21_val = R21_match.group(1)
                         phi21_val = phi21_match.group(1)
-                        params_dict['R21'] = float(r21_val) if r21_val != "nan" else np.nan
+                        R31_val = R31_match.group(1) if R31_match else "nan"
+                        phi31_val = phi31_match.group(1) if phi31_match else "nan"
+                        params_dict['R21'] = float(R21_val) if R21_val != "nan" else np.nan
                         params_dict['phi21'] = float(phi21_val) if phi21_val != "nan" else np.nan
+                        params_dict['R31'] = float(R31_val) if R31_val != "nan" else np.nan
+                        params_dict['phi31'] = float(phi31_val) if phi31_val != "nan" else np.nan
                     else:
                         params_dict['R21'] = np.nan
                         params_dict['phi21'] = np.nan
@@ -78,7 +83,14 @@ def parse_log_file(filepath="sim_results_space.txt"):
                     print(f"ERROR {e}. Failed to parse line: {line.strip()} ")
                     
     df = pd.DataFrame(data)
-    print(f"SUCCESS: LOADED {len(df)} SIMULATION RUNS")
+    original_len = len(df)
+    if FILTER_DIVERGENT:
+        df = df[df['State'] != 'DIVERGENT']
+        # df = df[df['State'] != 'STABLE']
+        # df = df[df['State'] != 'PERIODIC']
+        print(f"SUCCESS: LOADED {original_len} SIMULATION RUNS - KEPT {len(df)} NON-DIVERGENT RUNS")
+    else:
+        print(f"SUCCESS: LOADED {original_len} SIMULATION RUNS - KEPT {len(df)} NON-DIVERGENT RUNS")
     return df
 
 
@@ -92,6 +104,7 @@ def main():
 
     # COMMON
     FILENAME = config.get("FILENAME", "sim_results_space.txt") 
+    FILTER_DIVERGENT = True
 
     # UMAP PARAMETERS:
     N_NEIGHBORS  = config.get("N_NEIGHBORS", 15) 
@@ -103,17 +116,17 @@ def main():
     PLOT_FOURIER_SPACE = True
 
     # FOURIER SPACE PARAMETERS
-    # TARGET_R21 = 0.545
-    # TARGET_PHI21 = 4.395 
-    # MODEL_LABEL = 'Tanaka-Takeuti Model'
-    # STAR_LABEL = 'OGLE-LMC-RRLYR-00001'
-
-    TARGET_R21 = 0.101
-    TARGET_PHI21 = 0.098
+    TOP_NEIGH = 1 
     MODEL_LABEL = 'Tanaka-Takeuti Model'
-    STAR_LABEL = 'OGLE-LMC-RRLYR-00029'
+    TARGET_STARS = [
+        {'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
+        ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31':0.206, 'phi31':3.168}
+        ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
+        ]
+    
 
-    dataset = parse_log_file(FILENAME)
+
+    dataset = parse_log_file(FILENAME, FILTER_DIVERGENT=FILTER_DIVERGENT)
     if dataset.empty:
         print(f"{FILENAME} is empty. Exiting.")
         return
@@ -140,18 +153,24 @@ def main():
                                 )
     
     if PLOT_FOURIER_SPACE:
-        com.plot_fourier_space(dataset
-                            , target_R21=TARGET_R21
-                            , target_phi21=TARGET_PHI21
+        for target_star in TARGET_STARS:
+            print(f"PROCESSING TARGET STAR: {target_star['STAR_LABEL']}")
+            com.plot_fourier_space(dataset=dataset
+                            , target_R21=target_star['R21']
+                            , target_phi21=target_star['phi21']
                             , model_label=MODEL_LABEL
-                            , star_label=STAR_LABEL
+                            , star_label=target_star['STAR_LABEL']
                             )
 
-        print_and_save_neighbours(dataset=dataset
-                                  , param_arr=param_arr
-                                  , R21=TARGET_R21
-                                  , phi21=TARGET_PHI21
-                                  )
+            print_and_save_neighbours(dataset=dataset
+                                    , param_arr=param_arr
+                                    , star_label=target_star['STAR_LABEL']
+                                    , R21=target_star['R21']
+                                    , phi21=target_star['phi21']
+                                    , R31=target_star.get('R31', 0)
+                                    , phi31=target_star.get('phi31', 0)
+                                    , TOP_N=TOP_NEIGH
+                                    )
 
 
 if __name__ == "__main__": main()

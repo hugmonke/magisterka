@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.fft import rfft, rfftfreq
 from scipy.optimize import differential_evolution
 import COMMON as com 
 import tomllib
@@ -11,27 +10,25 @@ import tomllib
 # ------------------------------------------------------------
 def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=500):
     """Runs a single simulation and returns the steady-state x, y, z arrays."""
+
     x, y, z = init_xyz
-    
-    steps_skip = int(t_skip / dt)
-    for _ in range(steps_skip):
+    N_skip = int(t_skip / dt)
+    N_sim = int(t_end / dt)
+
+    for _ in range(N_skip):
         x, y, z = com.runge_kutta(x, y, z, dt, **params)
         if np.isnan(x) or abs(x) > 1e6:
             return None, None, None 
+    x_arr, y_arr, z_arr = np.zeros(N_sim), np.zeros(N_sim), np.zeros(N_sim)
 
-    steps_record = int(t_end / dt)
-    x_hist = np.zeros(steps_record)
-    y_hist = np.zeros(steps_record)
-    z_hist = np.zeros(steps_record)
-    
-    for i in range(steps_record):
+    for i in range(N_sim):
         x, y, z = com.runge_kutta(x, y, z, dt, **params)
         if np.isnan(x) or abs(x) > 1e6:
             return None, None, None
             
-        x_hist[i], y_hist[i], z_hist[i] = x, y, z
+        x_arr[i], y_arr[i], z_arr[i] = x, y, z
         
-    return x_hist, y_hist, z_hist
+    return x_arr, y_arr, z_arr
 
 
 # ------------------------------------------------------------
@@ -42,19 +39,19 @@ def cost_function(target_featuers, param_array, param_names, dt, t_skip, t_end):
     params = {name: val for name, val in zip(param_names, param_array)}
     
     x_array, y_array, z_array = get_trajectory(params, dt=dt, t_skip=t_skip, t_end=t_end)
-    if x_array is None: return 1e6 # Penalty: Explosion
-        
-    # PERIODICITY CHECK
+    if x_array is None: return 1e6 
+
     z_mean = np.mean(z_array)
     has_crossed = (z_array[:-1] <= z_mean) & (z_array[1:] > z_mean)
     where_crossed = np.where(has_crossed)[0]
     if len(where_crossed) < 2: return 1e6 
-    poinc_x = x_array[where_crossed] # X-coords at crossing points
-    amplitude_x = np.max(x_array) - np.min(x_array)
-    periodicity_error = np.std(poinc_x) / (amplitude_x + 1e-6) # normalized variance of crossings
+
+    crossed_x = x_array[where_crossed]
+    x_amplitude = np.max(x_array) - np.min(x_array)
+    periodicity_error = np.std(crossed_x) / (x_amplitude + 1e-9) 
     
     features = com.get_fourier_features(x_array, dt)
-    if features is None: return 1e6 # Penalty: Fixed point (Dead)
+    if features is None: return 1e6 
         
     error_R21 = (features["R21"] - target_featuers["R21"])**2
     diff_phi = abs(features["phi21"] - target_featuers["phi21"])
@@ -90,11 +87,11 @@ def main():
     print(f"Targeting OGLE RRab: R21={OGLE_TARGETS['R21']}, phi21={OGLE_TARGETS['phi21']}")
     
     BOUNDS          = [
-                        (0.1, 10.0),       # alpha
-                        (0.1, 10.0),       # mu
-                        (0.0, 5.0),        # gamma
-                        (0.0, 5.0),        # p
-                        (0.0, 5.0)         # s
+                        (-2, 10),       # alpha
+                        (-1, 10),       # mu
+                        (0, 5),        # gamma
+                        (0, 5),        # p
+                        (0, 5)         # s
                        ]
     
     param_arr = ['alpha', 'mu', 'gamma', 'p', 's']

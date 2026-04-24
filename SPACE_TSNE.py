@@ -5,7 +5,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
-import common as com 
+import COMMON as com 
 import tomllib
 
 # ------------------------------------------------------------

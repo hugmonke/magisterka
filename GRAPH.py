@@ -2,42 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import COMMON as com 
 import tomllib
-# ------------------------------------------------------------
-# POINCARÉ MAP
-# ------------------------------------------------------------
-def generate_plane(point, normal):
-    point = np.array(point)
-    normal = np.array(normal)
-    normal = normal / np.linalg.norm(normal)  # normalize
-    a, b, c = normal
-    d = -np.dot(normal.T, point.T)
-
-    return a, b, c, d
-
-
-def poincare_map(x, y, z, plane):
-    a, b, c, d = plane
-    def plane_eq(x, y, z): 
-        return a*x + b*y + c*z + d
-    poinc_x = []
-    poinc_y = [] 
-    poinc_z = []
-
-    for i in range(1, len(x)):
-        f_prev = plane_eq(x[i-1], y[i-1], z[i-1])
-        f_curr = plane_eq(x[i], y[i], z[i])
-
-        # count BOTH upward and downward crossings
-        if (f_prev < 0 and f_curr >= 0) or (f_prev > 0 and f_curr <= 0):
-            t_cross = abs(f_prev)/(abs(f_prev)+abs(f_curr))
-            xi = x[i-1] + t_cross*(x[i]-x[i-1])
-            yi = y[i-1] + t_cross*(y[i]-y[i-1])
-            zi = z[i-1] + t_cross*(z[i]-z[i-1])
-            poinc_x.append(xi)
-            poinc_y.append(yi)
-            poinc_z.append(zi)
-
-    return np.array(poinc_x), np.array(poinc_y), np.array(poinc_z)
 
 
 def plot_poincare_plane(ax, plane, x, y, z, alpha=0.2):
@@ -74,36 +38,54 @@ def main():
     PARAMS_LIST = config.get("SAVED_PARAMS", [{}])
 
     for PARAMS in PARAMS_LIST:
-        success = False
-        while not success:
-            params = com.get_parameteres(params=PARAMS, size=1)
-            lle, valid_mask, x, y, z = com.solve_and_get_lle(init_xyz = INIT_XYZ
-                                                            , params = params
-                                                            , dt = DT
-                                                            , t_skip = T_SKIP
-                                                            , t_end = T_END
-                                                            , size = SIZE
-                                                            , cutoff= CUTOFF
-                                                            )
-            
-            if not valid_mask[0]: print("System diverged. Retrying with new parameters."); continue
-            params = {param: val[0] for param, val in params.items()}
-            param_string = ", ".join([f"'{param}': {val}" for param, val in params.items()])
-            print("Parameters:", param_string)
+        params = com.get_parameteres(params=PARAMS, size=1)
+        lle, valid_mask, x, y, z = com.solve_and_get_lle(init_xyz = INIT_XYZ
+                                                        , params = params
+                                                        , dt = DT
+                                                        , t_skip = T_SKIP
+                                                        , t_end = T_END
+                                                        , size = SIZE
+                                                        , cutoff= CUTOFF
+                                                        )
+        
+        if not valid_mask[0]: 
+            print(f"System diverged for {PARAMS}. \nContinuing.")
+            continue
+        
+        params = {param: val[0] for param, val in params.items()}
+        param_string = ", ".join([f"'{param}': {val}" for param, val in params.items()])
+        print("Parameters:", param_string)
 
-            alpha, mu = params["alpha"], params["mu"]
-            gamma, p, s = params["gamma"], params["p"], params["s"]
-            x, y, z, lle = x[:, 0], y[:, 0], z[:, 0], lle[0]
+        alpha, mu = params["alpha"], params["mu"]
+        gamma, p, s = params["gamma"], params["p"], params["s"]
+        x, y, z, lle = x[:, 0], y[:, 0], z[:, 0], lle[0]
 
-            mean_x, mean_y, mean_z = np.mean(x), np.mean(y), np.mean(z)
-            dx0, dy0, dz0 = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
-            plane = generate_plane(point=(mean_x, mean_y, mean_z), normal=(dx0, dy0, dz0))
-            poinc_x, poinc_y, poinc_z = poincare_map(x=x, y=y, z=z, plane=plane)
+        mean_x, mean_y, mean_z = np.mean(x), np.mean(y), np.mean(z)
+        dx0, dy0, dz0 = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+        plane = com.generate_plane(point=(mean_x, mean_y, mean_z), normal=(dx0, dy0, dz0))
+        poinc_x, poinc_y, poinc_z = com.poincare_map(x=x, y=y, z=z, plane=plane)
 
-            entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y, bins=50, floor=10)
-            state = com.classify(entropy=entropy, lle=lle)
-
-            success = True
+        entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y)
+        state = com.classify(entropy=entropy, lle=lle)
+        
+        if state in ["CHAOTIC", "QUASI_PERIODIC", "PERIODIC"]:
+            # Double check if PERIODIC, not DIVERGENT (The wave doesnt run away)
+            drift_threshold = 0.05 # Chosen arbitrally, works best, allows some numerical errors
+            half_idx = len(x)//2 
+            drift_ratio = abs(np.mean(x[:half_idx]) - np.mean(x[half_idx:])) / (np.max(x) - np.min(x) + 1e-9)
+            amp_start = np.max(x[:half_idx]) - np.min(x[:half_idx])
+            amp_end = np.max(x[half_idx:]) - np.min(x[half_idx:])
+            amp_growth = abs(amp_end - amp_start) / (amp_start + 1e-9)
+                    
+            if drift_ratio >= 0.05 or amp_growth >= 0.05: 
+                state = "DIVERGENT"
+            elif state == "PERIODIC":
+                features = com.get_fourier_features(x, dt=DT) 
+                if features: 
+                    R21, PHI21 = features["R21"], features["phi21"]
+                    R31, PHI31 = features["R31"], features["phi31"]
+                else: 
+                    state = "DIVERGENT"
             
         print(f"Classified State: {state} | Entropy: {entropy:.4f} | LLE: {lle:.4f}")
         with open("simulation_results.txt", "a", encoding="utf-8") as file:
@@ -123,7 +105,7 @@ def main():
         ax1.set_title("Time Series x(t)")
         ax1.set_xlabel('t')
         ax1.set_ylabel('x')
-        ax1.set_xlim(T_END - 20, T_END)
+        ax1.set_xlim(T_SKIP, T_END)
         ax1.invert_yaxis()
         # Phase Space
         ax2 = fig.add_subplot(223, projection='3d')
