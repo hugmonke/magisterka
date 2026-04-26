@@ -15,21 +15,26 @@ def check_missing_cols(dataset, param_arr):
     
 
 def print_and_save_neighbours(dataset, param_arr, star_label, R21, phi21, R31=0, phi31=0,TOP_N=1):
-    df_periodic = dataset[(dataset['State'] == 'PERIODIC') & (dataset['R21'].notna())].copy()
+    df_periodic = dataset[(dataset['R21'].notna())].copy()
     if not df_periodic.empty:
-        df_periodic['FOURIER_DIST'] = \
-            np.sqrt(
-            (df_periodic['R21'] - R21)**2 + 
-            ((df_periodic['phi21'] - phi21) / (2*np.pi))**2 +
-            (df_periodic['R31'] - R31)**2 + 
-            ((df_periodic['phi31'] - phi31) / (2*np.pi))**2
-            )
+        diff_phi21 = np.abs(df_periodic['phi21'] - phi21)
+        wrap_phi21 = np.minimum(diff_phi21, 2*np.pi - diff_phi21)
+        
+        diff_phi31 = np.abs(df_periodic['phi31'] - R31) # assuming you meant phi31 here in original
+        wrap_phi31 = np.minimum(diff_phi31, 2*np.pi - diff_phi31)
+
+        df_periodic['FOURIER_DIST'] = np.sqrt(
+            10 * (df_periodic['R21'] - R21)**2 + 
+            (wrap_phi21)**2 +
+            10 * (df_periodic['R31'] - R31)**2 + 
+            (wrap_phi31)**2
+        )
 
         best_matches = df_periodic.sort_values('FOURIER_DIST').head(TOP_N)
         with open("config.toml", "a", encoding="utf-8") as config:
             for i in range(len(best_matches)):
                 match = best_matches.iloc[i]
-                config.write(f"\n[[SAVED_PARAMS]] # TARGET: {star_label} | TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
+                config.write(f"\n[[SAVED_STAR_PARAMS]] # TARGET: {star_label} | TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
                 for j in param_arr:
                     config.write(f"{j} = {match[j]}\n")
 
@@ -118,10 +123,9 @@ def main():
     # FOURIER SPACE PARAMETERS
     TOP_NEIGH = 1 
     MODEL_LABEL = 'Tanaka-Takeuti Model'
-    TARGET_STARS = [
-        {'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
-        ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31':0.206, 'phi31':3.168}
-        ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
+    TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
+        #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
+        #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
         ]
     
 

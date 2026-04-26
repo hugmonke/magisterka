@@ -66,7 +66,7 @@ def main():
         poinc_x, poinc_y, poinc_z = com.poincare_map(x=x, y=y, z=z, plane=plane)
 
         entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y)
-        state = com.classify(entropy=entropy, lle=lle)
+        state = com.classify(entropy=entropy, lle=lle)  
         
         if state in ["CHAOTIC", "QUASI_PERIODIC", "PERIODIC"]:
             # Double check if PERIODIC, not DIVERGENT (The wave doesnt run away)
@@ -105,7 +105,7 @@ def main():
         ax1.set_title("Time Series x(t)")
         ax1.set_xlabel('t')
         ax1.set_ylabel('x')
-        ax1.set_xlim(T_SKIP, T_END)
+        ax1.set_xlim(T_END-200, T_END)
         ax1.invert_yaxis()
         # Phase Space
         ax2 = fig.add_subplot(223, projection='3d')
