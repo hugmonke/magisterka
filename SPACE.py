@@ -64,13 +64,12 @@ def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0
                     
                     if drift_ratio >= 0.05 or amp_growth >= 0.05: 
                         state = "DIVERGENT"
-                    elif state == "PERIODIC":
-                        features = com.get_fourier_features(x, dt=dt) 
-                        if features: 
-                            R21, PHI21 = features["R21"], features["phi21"]
-                            R31, PHI31 = features["R31"], features["phi31"]
-                        else: 
-                            state = "DIVERGENT"
+                    features = com.get_fourier_features(x, dt=dt) 
+                    if features: 
+                        R21, PHI21 = features["R21"], features["phi21"]
+                        R31, PHI31 = features["R31"], features["phi31"]
+                    else: 
+                        state = "DIVERGENT"
                     
                 run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
                 results.append(run_data)

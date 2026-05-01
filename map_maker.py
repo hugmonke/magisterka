@@ -15,22 +15,22 @@ def check_missing_cols(dataset, param_arr):
     
 
 def print_and_save_neighbours(dataset, param_arr, star_label, R21, phi21, R31=0, phi31=0,TOP_N=1):
-    df_periodic = dataset[(dataset['R21'].notna())].copy()
-    if not df_periodic.empty:
-        diff_phi21 = np.abs(df_periodic['phi21'] - phi21)
+    df_filtered = dataset[(dataset['R21'].notna())].copy()
+    if not df_filtered.empty:
+        diff_phi21 = np.abs(df_filtered['phi21'] - phi21)
         wrap_phi21 = np.minimum(diff_phi21, 2*np.pi - diff_phi21)
         
-        diff_phi31 = np.abs(df_periodic['phi31'] - R31) # assuming you meant phi31 here in original
+        diff_phi31 = np.abs(df_filtered['phi31'] - phi31)
         wrap_phi31 = np.minimum(diff_phi31, 2*np.pi - diff_phi31)
 
-        df_periodic['FOURIER_DIST'] = np.sqrt(
-            10 * (df_periodic['R21'] - R21)**2 + 
+        df_filtered['FOURIER_DIST'] = np.sqrt(
+            10 * (df_filtered['R21'] - R21)**2 + 
             (wrap_phi21)**2 +
-            10 * (df_periodic['R31'] - R31)**2 + 
+            10 * (df_filtered['R31'] - R31)**2 + 
             (wrap_phi31)**2
         )
 
-        best_matches = df_periodic.sort_values('FOURIER_DIST').head(TOP_N)
+        best_matches = df_filtered.sort_values('FOURIER_DIST').head(TOP_N)
         with open("config.toml", "a", encoding="utf-8") as config:
             for i in range(len(best_matches)):
                 match = best_matches.iloc[i]
@@ -90,7 +90,7 @@ def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
     df = pd.DataFrame(data)
     original_len = len(df)
     if FILTER_DIVERGENT:
-        df = df[df['State'] != 'DIVERGENT']
+        #df = df[df['State'] != 'DIVERGENT']
         # df = df[df['State'] != 'STABLE']
         # df = df[df['State'] != 'PERIODIC']
         print(f"SUCCESS: LOADED {original_len} SIMULATION RUNS - KEPT {len(df)} NON-DIVERGENT RUNS")
@@ -124,8 +124,16 @@ def main():
     TOP_NEIGH = 1 
     MODEL_LABEL = 'Tanaka-Takeuti Model'
     TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
-        #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
-        #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
+                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00050', 'R21': 0.443, 'phi21': 4.126, 'R31': 0.346, 'phi31': 2.432}
+                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00254', 'R21': 0.467, 'phi21': 4.124, 'R31': 0.368, 'phi31': 2.193}
+                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00498', 'R21': 0.12, 'phi21': 4.778, 'R31': 0.0, 'phi31': 0.0}
+                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00701', 'R21': 0.134, 'phi21': 4.937, 'R31': 0.0, 'phi31': 0.0} # Phased with P1
+                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00904', 'R21': 0.47, 'phi21': 4.12, 'R31': 0.373, 'phi31': 2.122} 
+                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0034', 'R21': 0.167, 'phi21': 4.749, 'R31': 0.103, 'phi31': 5.208}
+                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0031', 'R21': 0.244, 'phi21': 4.457, 'R31': 0.101, 'phi31': 2.222}
+                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0050', 'R21': 0.367, 'phi21': 5.342, 'R31': 0.184, 'phi31': 3.578}
+                    #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
+                    #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
         ]
     
 

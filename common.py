@@ -345,13 +345,13 @@ def plot_fourier_space(dataset, target_R21, target_phi21, model_label, star_labe
     """Plots the Accessible Fourier Space vs the Target Observational Star."""
     print("=== Plotting Accessible Fourier Space ===")
 
-    df_periodic = dataset[(dataset['State'] == 'PERIODIC') & (dataset['R21'].notna())]
-    if df_periodic.empty:
-        print("MAP_MAKER.py: df_periodic is empty - No valid Fourier features")
+    df_filtered = dataset[(dataset['R21'].notna())]
+    if df_filtered.empty:
+        print("MAP_MAKER.py: df_filtered is empty - No valid Fourier features")
         return
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(df_periodic['phi21'], df_periodic['R21'], c='blue', alpha=0.3, s=10, label=model_label) # theoretically possible points
+    ax.scatter(df_filtered['phi21'], df_filtered['R21'], c='blue', alpha=0.3, s=10, label=model_label) # theoretically possible points
     ax.scatter(target_phi21, target_R21, c='red', marker='*', s=50, edgecolor='black', label=star_label) # Target Star
     
     plt.title("Fourier Space with Target Star")

@@ -79,7 +79,7 @@ def main():
                     
             if drift_ratio >= 0.05 or amp_growth >= 0.05: 
                 state = "DIVERGENT"
-            elif state == "PERIODIC":
+            else:
                 features = com.get_fourier_features(x, dt=DT) 
                 if features: 
                     R21, PHI21 = features["R21"], features["phi21"]
@@ -105,7 +105,7 @@ def main():
         ax1.set_title("Time Series x(t)")
         ax1.set_xlabel('t')
         ax1.set_ylabel('x')
-        ax1.set_xlim(T_END-200, T_END)
+        ax1.set_xlim(T_END-500, T_END)
         ax1.invert_yaxis()
         # Phase Space
         ax2 = fig.add_subplot(223, projection='3d')

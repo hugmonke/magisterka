@@ -114,10 +114,10 @@ def main():
     SPREAD          = config.get("SPREAD", 0.01)
     POPSIZE          = config.get("POPSIZE", 100)
     OGLE_TARGETS    = {
-                        "R21": 0.447
-                        ,"phi21": 4.738         
-                        ,"R31": 0.206
-                        ,"phi31": 3.168
+                        "R21": 0.244
+                        ,"phi21": 4.457       
+                        ,"R31": 0.101
+                        ,"phi31": 2.222
                       }
     print("=== STARFIT: Tanaka-Takeuti Inverse Problem ===")
     print(f"Targeting OGLE RRab: R21={OGLE_TARGETS['R21']}, phi21={OGLE_TARGETS['phi21']}, R31={OGLE_TARGETS.get(('R31'), None)}, phi31={OGLE_TARGETS.get(('phi31'), None)}")
@@ -179,6 +179,8 @@ def main():
     print("=== Simulation vs Target ===\n")
     print(f"R21:   Sim = {final_features['R21']}      | Target={OGLE_TARGETS['R21']}")
     print(f"phi21: Sim = {final_features['phi21']}    | Target={OGLE_TARGETS['phi21']}")
+    print(f"R31:   Sim = {final_features['R31']}      | Target={OGLE_TARGETS['R31']}")
+    print(f"phi31: Sim = {final_features['phi31']}    | Target={OGLE_TARGETS['phi31']}")
 
     with open("config.toml", "a", encoding="utf-8") as conf:
         conf.write(f"\n[[SAVED_PARAMS]] # State: OPTIMIZED_FIT_ERR_{result.fun}\n") 
