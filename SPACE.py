@@ -5,11 +5,29 @@ from sklearn.model_selection import train_test_split
 import COMMON as com 
 import tomllib
 
+def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0, 0.0), params = None, dt = 0.01, t_skip = 50, t_end = 150, size = 1000, cutoff = 1e6, batch_size = 1000, tolerance = 0.1):
+    """Generates a dataset by running batched simulations of the dynamical system.
 
-# ------------------------------------------------------------
-# DATA GENERATION
-# ------------------------------------------------------------
-def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0, 0.0), params = None, dt = 0.01, t_skip = 50, t_end = 150, size = 1000, cutoff= 1e6, batch_size = 1000):
+    Sweeps the parameter space by running multiple simulations in batches. 
+    Calculates the Largest Lyapunov Exponent (LLE) for each valid trajectory.
+    Extracts the Poincaré section, computes the Shannon entropy, and evaluates the Fourier features. 
+    Classifies the dynamical state (CHAOTIC, PERIODIC, QUASI-PERIODIC, STABLE, DIVERGENT) and logs all results to a local text file.
+
+    Args:
+        filename (str): Log file path.
+        sim_num (int, optional): Total number of simulations. Defaults to 1000.
+        print_every (int, optional): Frequency of console progress updates. Defaults to 50.
+        init_xyz (tuple, optional): Initial conditions (x, y, z) for the system. Defaults to (0.1, 0.0, 0.0).
+        dt (float, optional): Integration time step. Defaults to 0.01.
+        t_skip (float, optional): Simulation time to discard. Defaults to 50.
+        t_end (float, optional): Total simulation time per run. Defaults to 150.
+        size (int, optional): Size of the generated parameter array. Defaults to 1000.
+        cutoff (float, optional): Physical divergence threshold. Defaults to 1e6.
+        batch_size (int, optional): Number of simulations to process in one batch. Defaults to 1000.
+
+    Returns:
+        pd.DataFrame: DataFrame containing parameters, dynamical states, entropy, LLE, and Fourier features for all processed simulations.
+    """
     print(f"Running {sim_num} simulations to map parameter space")
     overflow_count = 0
     results = []
@@ -20,7 +38,7 @@ def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0
         while total_sim < sim_num:
 
             cur_size = min(batch_size, sim_num - total_sim)
-            params = com.get_parameteres(params=None, size=cur_size)
+            params = com.get_parameteres(size=cur_size)
             lle_all, valid_mask, x_all, y_all, z_all = com.solve_and_get_lle(init_xyz = init_xyz
                                                                             , params = params
                                                                             , dt = dt
@@ -55,23 +73,11 @@ def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0
                     entropy = com.shannon_entropy(poinc_x, poinc_y)
                     state = com.classify(entropy, lle)
                     
-                    half_idx = len(x)//2 
-                    drift_ratio = abs(np.mean(x[:half_idx]) - np.mean(x[half_idx:])) / (np.max(x) - np.min(x) + 1e-9)
-                    
-                    amp_start = np.max(x[:half_idx]) - np.min(x[:half_idx])
-                    amp_end = np.max(x[half_idx:]) - np.min(x[half_idx:])
-                    amp_growth = abs(amp_end - amp_start) / (amp_start + 1e-9)
-                    
-                    if drift_ratio >= 0.05 or amp_growth >= 0.05: 
-                        state = "DIVERGENT"
-                    features = com.get_fourier_features(x, dt=dt) 
-                    if features: 
-                        R21, PHI21 = features["R21"], features["phi21"]
-                        R31, PHI31 = features["R31"], features["phi31"]
-                    else: 
-                        state = "DIVERGENT"
-                    
-                run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
+                    state, features = com.validate_state_and_features(x_array=x, dt=dt, state=state, tolerance=tolerance)
+                    R21, phi21 = features["R21"], features["phi21"]
+                    R31, phi31 = features["R31"], features["phi31"]
+
+                    run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
                 results.append(run_data)
                 log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | R21: {R21:>6.3f} | phi21: {PHI21:>6.3f} | R31: {R31:>6.3f} | phi31: {PHI31:>6.3f} | T_SKIP: {t_skip} | T_END: {t_end}\n"
                 file.write(log_line)
@@ -87,7 +93,23 @@ def get_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1, 0.0
 
 
 def train_rf_classifier(df_params, df_states, features, n_estimators, test_size, random_state):
-    """Trains a Random Forest and prints feature importances."""
+    """Trains a Random Forest Classifier to predict dynamical states from the chosen model parameters.
+
+    Splits the provided parameter dataset into training and testing subsets, fits a 
+    Random Forest Classifier to predict the resulting dynamical behavior and prints 
+    classification accuracy and relative importance of each parameter.
+
+    Args:
+        df_params (pd.DataFrame): Input parameters.
+        df_states (pd.Series): Target dynamical states.
+        features (list of str): Names of parameters being evaluated.
+        n_estimators (int): Number of decision trees in the random forest.
+        test_size (float): Percentage of dataset to include in test sample.
+        random_state (int): Seed value for reproducibility.
+
+    Returns:
+        None: Prints classification accuracy and feature importances to the console.
+    """
     print("=== Feature Importances ===")
     X_train, X_test, Y_train, Y_test = train_test_split(df_params, df_states, test_size=test_size, random_state=random_state)
 
@@ -105,6 +127,14 @@ def train_rf_classifier(df_params, df_states, features, n_estimators, test_size,
 
 
 def main():
+    """Executes the parameter space mapping and machine learning pipeline.
+
+    1. Reads configuration settings from 'config.toml'.
+    2. Generates a dataset of classifications of simulated stellar pulsations and their parameteres.
+    3. (Optionally) Plots 2D UMAP visulisation of the parameter space.
+    4. (Optionally) Trains Random Forest classifier for parameter importance analysis.
+
+    """
     try:
         with open("config.toml", "rb") as conf:
             config = tomllib.load(conf)
@@ -119,11 +149,12 @@ def main():
     T_SKIP          = config.get("T_SKIP", 100)
     T_END           = config.get("T_END", 1000)
     CUTOFF          = config.get("CUTOFF", 1e6)
+    TOLERANCE       = config.get("TOLERANCE", 0.1)
     SIM_NUM         = config.get("SIM_NUM", 1_000)
     PRINT_EVERY     = config.get("PRINT_EVERY", 50) 
     BATCH_SIZE      = config.get("BATCH_SIZE", 1000) 
     FILENAME        = config.get("FILENAME", "sim_results_space.txt") 
-
+    
     # UMAP PARAMETERS:
     N_NEIGHBORS     = config.get("N_NEIGHBORS", 15) # n_neighbors controls how UMAP balances local vs global structure.
     MIN_DIST        = config.get("MIN_DIST", 0.1)   # min_dist controls how tightly points are packed together.
@@ -134,12 +165,11 @@ def main():
     TEST_SIZE       = config.get("TEST_SIZE", 0.2)
 
     # PLOT PARAMETERS
-    PLOT_PARAM_SPACE = True
-    PLOT_FOURIER_SPACE = True
+    PLOT_PARAM_SPACE = False
     TRAIN_CLASSIFIER = False
 
 
-    dataset = get_dataset(filename=FILENAME
+    dataset = generate_dataset(filename=FILENAME
                         , sim_num = SIM_NUM
                         , print_every = PRINT_EVERY
                         , init_xyz = INIT_XYZ
@@ -149,7 +179,8 @@ def main():
                         , t_end = T_END
                         , size = SIM_NUM
                         , cutoff = CUTOFF
-                        , batch_size= BATCH_SIZE
+                        , batch_size = BATCH_SIZE
+                        , tolerance = TOLERANCE
                         )
     
     if dataset.empty or len(dataset['State'].unique()) < 2:

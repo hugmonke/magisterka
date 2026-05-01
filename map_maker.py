@@ -8,26 +8,69 @@ import COMMON as com
 
 
 def check_missing_cols(dataset, param_arr):
+    """Validates the presence of required parameter columns in the dataset.
+
+    Args:
+        dataset (pd.DataFrame): DataFrame to be checked.
+        param_arr (list of str): List of expected column names.
+
+    Returns:
+        None: Prints an error message to the console if any columns are missing.
+    """
+
     missing_cols = [col for col in param_arr if col not in dataset.columns]
     if missing_cols:
         print(f"ERROR: Log file is missing the following columns: {missing_cols}")
         return
     
 
-def print_and_save_neighbours(dataset, param_arr, star_label, R21, phi21, R31=0, phi31=0,TOP_N=1):
+def print_and_save_neighbours(dataset, param_arr, star_label, target_R21, target_phi21, target_R31=0, target_phi31=0, TOP_N=1):
+    """Finds and saves TOP_N closest simulated parameter sets to a target star.
+
+    Calculates Standardized Euclidean Distance in Fourier space 
+    between the simulated dataset and the empirical parameters of a target star. 
+    The phases are wrapped to handle the [0, 2π] boundary. 
+    TOP_N closest matches are printed to the console and appended to a local 'config.toml' file.
+
+
+    TODO: Think about why 10 *? variance?
+    Args:
+        dataset (pd.DataFrame): DataFrame containing simulated Fourier features.
+        param_arr (list of str): List of parameter column names to save.
+        star_label (str): Name of the target star.
+        target_R21 (float): Target amplitude ratio R21.
+        target_phi21 (float): Target phase difference phi21 (in radians).
+        target_R31 (float, optional): Target amplitude ratio R31. Defaults to 0.
+        target_phi31 (float, optional): Target phase difference phi31 (in radians). Defaults to 0.
+        TOP_N (int, optional): The number of nearest neighbors to retrieve. Defaults to 1.
+
+    Returns:
+        None: Appends the best matching parameters to 'config.toml' and prints results.
+    """
+
     df_filtered = dataset[(dataset['R21'].notna())].copy()
     if not df_filtered.empty:
-        diff_phi21 = np.abs(df_filtered['phi21'] - phi21)
+        diff_phi21 = np.abs(df_filtered['phi21'] - target_phi21)
         wrap_phi21 = np.minimum(diff_phi21, 2*np.pi - diff_phi21)
         
-        diff_phi31 = np.abs(df_filtered['phi31'] - phi31)
+        diff_phi31 = np.abs(df_filtered['phi31'] - target_phi31)
         wrap_phi31 = np.minimum(diff_phi31, 2*np.pi - diff_phi31)
 
+        var_R21 = df_filtered['R21'].var()
+        var_phi21 = df_filtered['phi21'].var()
+        var_R31 = df_filtered['R31'].var()
+        var_phi31 = df_filtered['phi31'].var()
+        
+        var_R21 = var_R21 if var_R21 > 0 else 1.0
+        var_phi21 = var_phi21 if var_phi21 > 0 else 1.0
+        var_R31 = var_R31 if var_R31 > 0 else 1.0
+        var_phi31 = var_phi31 if var_phi31 > 0 else 1.0
+
         df_filtered['FOURIER_DIST'] = np.sqrt(
-            10 * (df_filtered['R21'] - R21)**2 + 
-            (wrap_phi21)**2 +
-            10 * (df_filtered['R31'] - R31)**2 + 
-            (wrap_phi31)**2
+            ((df_filtered['R21'] - target_R21)**2) / var_R21 + 
+            ((wrap_phi21)**2) / var_phi21 +
+            ((df_filtered['R31'] - target_R31)**2) / var_R31 + 
+            ((wrap_phi31)**2) / var_phi31
         )
 
         best_matches = df_filtered.sort_values('FOURIER_DIST').head(TOP_N)
@@ -38,13 +81,29 @@ def print_and_save_neighbours(dataset, param_arr, star_label, R21, phi21, R31=0,
                 for j in param_arr:
                     config.write(f"{j} = {match[j]}\n")
 
+
+        print(f"TARGET STAR FOURIER FEATURES: 'R21': {target_R21}, 'phi21': {target_phi21}, 'R31': {target_R31}, 'phi31': {target_phi31}")
         print(f"=== TOP {TOP_N} NEAREST NEIGHBOURS ===\n")
-        print(best_matches[['alpha', 'mu', 'gamma', 'p', 's', 'R21', 'phi21', 'FOURIER_DIST']], "\n")
+        print(best_matches[['alpha', 'mu', 'gamma', 'p', 's', 'R21', 'phi21', 'R31', 'phi31', 'FOURIER_DIST']], "\n")
         print(f"{TOP_N} NEAREST NEIGHBOUR PARAMS SAVED TO CONFIG\n")
 
 
 def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
-    """Reads the simulation log and extracts parameters, states, and Fourier features."""
+
+    """Extracts states, parameters, and Fourier features from the generated log file.
+
+    Uses regular expressions to extract classified states, system parameters, and Fourier features. 
+    Evaluates the string representations of dictionaries and compiles the successful reads into a pandas DataFrame.
+
+    Args:
+        filepath (str, optional): Path to simulation log file. Defaults to "sim_results_space.txt".
+        FILTER_DIVERGENT (bool, optional): Flag indicating whether to filter out divergent trajectories. Defaults to True.
+
+    Returns:
+        pd.DataFrame: DataFrame containing parsed parameters, dynamical states, and Fourier features for each valid simulation run. 
+                      Exits program immediately if file not found.
+    """
+
     print(f"Reading data from {filepath}")
     if not os.path.exists(filepath):
         print(f"ERROR: Could not find {filepath}")
@@ -90,7 +149,7 @@ def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
     df = pd.DataFrame(data)
     original_len = len(df)
     if FILTER_DIVERGENT:
-        #df = df[df['State'] != 'DIVERGENT']
+        df = df[df['State'] != 'DIVERGENT']
         # df = df[df['State'] != 'STABLE']
         # df = df[df['State'] != 'PERIODIC']
         print(f"SUCCESS: LOADED {original_len} SIMULATION RUNS - KEPT {len(df)} NON-DIVERGENT RUNS")
@@ -100,6 +159,16 @@ def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
 
 
 def main():
+    """Executes the main parameter mapping and visualization pipeline.
+
+    1. Loads configuration variables from 'config.toml', 
+    2. Parses simulation log file.
+    3. Sorts the data by dynamical state priority. 
+    4. (Optionally) Plots 2D UMAP visulisation of the parameter space.
+    5. (Optionally) Plots Fourier space.
+    6. Calculates and saves the nearest neighbor parameters for a predefined list of target OGLE stars.
+
+    """
     try:
         with open("config.toml", "rb") as config:
             config = tomllib.load(config)
@@ -138,7 +207,9 @@ def main():
     
 
 
-    dataset = parse_log_file(FILENAME, FILTER_DIVERGENT=FILTER_DIVERGENT)
+    dataset = parse_log_file(FILENAME
+                             ,FILTER_DIVERGENT=FILTER_DIVERGENT
+                             )
     if dataset.empty:
         print(f"{FILENAME} is empty. Exiting.")
         return
@@ -153,7 +224,9 @@ def main():
     dataset['priority'] = dataset['State'].map(priority_dict).fillna(-1)
     dataset = dataset.sort_values('priority').drop(columns=['priority']).reset_index(drop=True)
     param_arr = ['alpha', 'mu', 'gamma', 'p', 's']
-    check_missing_cols(dataset=dataset, param_arr=param_arr)
+    check_missing_cols(dataset=dataset
+                       ,param_arr=param_arr
+                       )
     df_params, df_states = dataset[param_arr], dataset['State']
 
     if PLOT_PARAM_SPACE:
@@ -170,6 +243,8 @@ def main():
             com.plot_fourier_space(dataset=dataset
                             , target_R21=target_star['R21']
                             , target_phi21=target_star['phi21']
+                            , target_R31=target_star.get('R31', 0)
+                            , target_phi31=target_star.get('phi31', 0)
                             , model_label=MODEL_LABEL
                             , star_label=target_star['STAR_LABEL']
                             )
@@ -177,10 +252,10 @@ def main():
             print_and_save_neighbours(dataset=dataset
                                     , param_arr=param_arr
                                     , star_label=target_star['STAR_LABEL']
-                                    , R21=target_star['R21']
-                                    , phi21=target_star['phi21']
-                                    , R31=target_star.get('R31', 0)
-                                    , phi31=target_star.get('phi31', 0)
+                                    , target_R21=target_star['R21']
+                                    , target_phi21=target_star['phi21']
+                                    , target_R31=target_star.get('R31', 0)
+                                    , target_phi31=target_star.get('phi31', 0)
                                     , TOP_N=TOP_NEIGH
                                     )
 

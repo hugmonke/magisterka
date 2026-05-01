@@ -4,11 +4,9 @@ from numba import njit
 from sklearn.preprocessing import StandardScaler
 import umap
 from scipy.fft import rfft, rfftfreq
-# ------------------------------------------------------------
-# RANDOM PARAMETERS
-# ------------------------------------------------------------
+
 def get_parameteres(params: dict = None, size: int = 1000):
-    """Gets model parameters. Generates them if params is None.
+    """Gets model parameters as numpy arrays. Generates them if params is None.
 
     Args:
         params (dict): Model parameters containing keys:
@@ -34,10 +32,22 @@ def get_parameteres(params: dict = None, size: int = 1000):
         params = {param: np.array([val]) for param, val in params.items()}
     return params
 
-# ------------------------------------------------------------
-# POINCARÉ MAP
-# ------------------------------------------------------------
+
 def generate_plane(point, normal):
+    """Calculates the coefficients of a plane equation (ax + by + cz + d = 0).
+
+    Takes a point on the plane and a normal vector, normalizes the normal vector to a unit length of 1, 
+    and calculates the scalar distance component (d) from the origin.
+
+    Args:
+        point (array-like): A 3D coordinate (x, y, z) specifying a point that the plane passes through.
+        normal (array-like): A 3D vector (nx, ny, nz) perpendicular to the plane.
+
+    Returns:
+        tuple: A 4-element tuple (a, b, c, d) of floats representing the coefficients of the plane equation, 
+        where (a, b, c) is the normalized normal vector.
+    """
+
     point = np.array(point)
     normal = np.array(normal)
     normal = normal / np.linalg.norm(normal)  # normalize
@@ -48,6 +58,24 @@ def generate_plane(point, normal):
 
 
 def poincare_map(x, y, z, plane):
+    """Calculates the Poincaré section of a 3D trajectory intersecting a plane.
+
+    Iterates through a given 3D trajectory and identifies points where the trajectory
+    crosses a specified plane in phase space. Uses linear interpolation between discrete time steps to 
+    approximate the exact coordinates of the intersection.
+
+    Args:
+        x (array-like): X-coordinates representing the trajectory.
+        y (array-like): Y-coordinates representing the trajectory.
+        z (array-like): Z-coordinates representing the trajectory.
+        plane (tuple): Tuple representing the coefficients of the intersecting plane equation (ax + by + cz + d = 0).
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]:
+            - poinc_x: X-coordinates of all calculated intersection points on the Poincaré section.
+            - poinc_y: Y-coordinates of all calculated intersection points on the Poincaré section.
+            - poinc_z: Z-coordinates of all calculated intersection points on the Poincaré section.
+    """
     a, b, c, d = plane
     def plane_eq(x, y, z): 
         return a*x + b*y + c*z + d
@@ -71,9 +99,6 @@ def poincare_map(x, y, z, plane):
 
     return np.array(poinc_x), np.array(poinc_y), np.array(poinc_z)
 
-# ------------------------------------------------------------
-# MODEL
-# ------------------------------------------------------------
 @njit
 def get_derivatives(x: np.array, y: np.array, z: np.array, alpha: float, mu: float, gamma: float, p: float, s: float):
     """Gets model derivatives.
@@ -106,9 +131,6 @@ def get_derivatives(x: np.array, y: np.array, z: np.array, alpha: float, mu: flo
     return dxdt, dydt, dzdt
 
 
-# ------------------------------------------------------------
-# RK4 SOLVER
-# ------------------------------------------------------------
 @njit
 def runge_kutta(x: float = 0.1, y: float = 0.0, z: float = 0.0, dt: float = 0.01, alpha=0.0, mu=0.0, gamma=0.0, p=0.0, s=0.0):
     """Gets x, y, z at next timestep.
@@ -144,10 +166,6 @@ def runge_kutta(x: float = 0.1, y: float = 0.0, z: float = 0.0, dt: float = 0.01
     return x_next, y_next, z_next
 
 
-
-# ------------------------------------------------------------
-# ENTROPY
-# ------------------------------------------------------------
 def shannon_entropy(poinc_x: np.array, poinc_y: np.array, bins: int = 200, floor: int = 10):
     """Calculates entropy of points crossing the Poincare map.
 
@@ -168,11 +186,26 @@ def shannon_entropy(poinc_x: np.array, poinc_y: np.array, bins: int = 200, floor
     P = P[P > 0]
     return -np.sum(P * np.log(P)) / np.log(bins * bins)
 
-# ------------------------------------------------------------
-# FOURIER FEATURES
-# ------------------------------------------------------------
 def get_fourier_features(x_array, dt):
-    """Performs FFT on the simulated trajectory to extract R21 and phi21."""
+    """Extracts Fourier amplitude ratios and phase differences from a time series.
+
+    Performs a real Fast Fourier Transform on a 1D trajectory to isolate its fundamental frequency and harmonics. 
+    It calculates the amplitude ratios (R_k1 = A_k / A_1) and phase differences (phi_k1 = phi_k - k*phi_1) 
+    for the second and third harmonics. The wave is centered prior to the FFT to remove any DC offset.
+
+    Args:
+        x_array (array-like): Trajectory data.
+        dt (float): Time step between consecutive points in x_array.
+
+    Returns:
+        dict or None: Dictionary containing the extracted Fourier parameters:
+            - 'R21' (float): Amplitude ratio of the 2nd harmonic to the fundamental.
+            - 'phi21' (float): Phase difference of the 2nd harmonic (mod 2π).
+            - 'R31' (float): Amplitude ratio of the 3rd harmonic to the fundamental.
+            - 'phi31' (float): Phase difference of the 3rd harmonic (mod 2π).
+            
+            Returns 'None' if the fundamental amplitude < 1e-10, which indicates a flat or completely damped signal.
+    """
 
     N = len(x_array)
     x_centered = x_array - np.mean(x_array) # center wave
@@ -207,11 +240,6 @@ def get_fourier_features(x_array, dt):
     
     return {"R21": R21, "phi21": phi21, "R31": R31, "phi31": phi31}
 
-
-
-# ------------------------------------------------------------
-# LYAPUNOV EXPONENT AND MODEL SOLUTION
-# ------------------------------------------------------------
 def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt: float = 0.01, t_skip: int = 50, t_end: int = 150, size: int = 1000, cutoff: int = 1e6):
     """Returns Largest Lyapunov Exponent (LLE).
 
@@ -266,10 +294,6 @@ def solve_and_get_lle(init_xyz: tuple = (0.1, 0.0, 0.0), params: dict = None, dt
 
     return sum_log / (N_sim * dt), valid_mask, x_matrix, y_matrix, z_matrix
 
-
-# ------------------------------------------------------------
-# CLASSIFICATION
-# ------------------------------------------------------------
 def classify(entropy: float, lle: float):
     """Classifies the model's Dynamical Regime
 
@@ -295,8 +319,69 @@ def classify(entropy: float, lle: float):
         else:
             return "QUASI_PERIODIC"
     
+    import numpy as np
+
+def validate_state_and_features(x_array, dt, state, tolerance=0.05):
+    """Validates trajectory stability and extracts Fourier parameters.
+
+    Acts as a secondary filter for numerical stability. Splits the time series in half and checks for unphysical baseline drift or amplitude growth
+    for trajectories classified as potentially stable limit cycles or strange attractors (CHAOTIC, QUASI_PERIODIC, PERIODIC).
+    Calculates and returns the Fourier features if the trajectory is stable within the specified tolerance.
+
+    Args:
+        x_array (array-like): 1D trajectory data.
+        dt (float): Integration time step.
+        initial_state (str): Preliminary dynamical classification.
+        tolerance (float, optional): Max allowed fractional mean or amplitude change. Defaults to 0.05.
+
+    Returns:
+        tuple: A 2-element tuple '(final_state, features):
+            - final_state (string): Updated classification string
+            - features (dict): Contains 'R21', 'phi21', 'R31', and 'phi31' (np.nan if state is divergent).
+    """
+
+    final_state = state
+    features = {"R21": np.nan, "phi21": np.nan, "R31": np.nan, "phi31": np.nan}
+
+    if state in ["CHAOTIC", "QUASI_PERIODIC", "PERIODIC"]:
+        half_idx = len(x_array) // 2
+        
+        amplitude_total = np.max(x_array) - np.min(x_array) + 1e-9
+        mean_diff = abs(np.mean(x_array[:half_idx]) - np.mean(x_array[half_idx:]))
+        drift_ratio = mean_diff / amplitude_total
+
+        amp_start = np.max(x_array[:half_idx]) - np.min(x_array[:half_idx])
+        amp_end = np.max(x_array[half_idx:]) - np.min(x_array[half_idx:])
+        amp_growth = abs(amp_end - amp_start) / (amp_start + 1e-9)
+
+        extracted_features = get_fourier_features(x_array, dt)
+        if extracted_features is not None:
+            features = extracted_features
+
+            if drift_ratio >= tolerance or amp_growth >= tolerance:
+                final_state = "DIVERGENT"
+        else:
+            final_state = "DIVERGENT"
+                
+    return final_state, features
+    
 def plot_parameter_space(df_params, df_states, n_neighbors, min_dist, random_state):
-    """Scaling, UMAP dimensionality reduction and UMAP plotting."""
+    """UMAP dimensionality reduction and an interactive 2D projection generation.
+
+    Scales the input parameter space using standard scaling, reduces it to two dimensions using UMAP, 
+    and creates a scatter plot colored by the dynamical state of each point. 
+    It includes an interactive pick event: clicking a point on the plot will print its exact parameters and append them to a local 'config.toml' file for later use.
+
+    Args:
+        df_params (pd.DataFrame): DataFrame containing input parameters for the simulations.
+        df_states (pd.Series): Series containing classified dynamical states corresponding to each parameter set.
+        n_neighbors (int):  UMAP local neighborhood size.
+        min_dist (float): UMAP point packing density
+        random_state (int): Random seed for reproducible UMAP projections.
+
+    Returns:
+        None: The function opens a matplotlib display window and does not return a value.
+    """
     print("=== Running UMAP projection ===")
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(df_params)
@@ -341,23 +426,62 @@ def plot_parameter_space(df_params, df_states, n_neighbors, min_dist, random_sta
     plt.grid(True)
     plt.show()
 
-def plot_fourier_space(dataset, target_R21, target_phi21, model_label, star_label):
-    """Plots the Accessible Fourier Space vs the Target Observational Star."""
-    print("=== Plotting Accessible Fourier Space ===")
 
-    df_filtered = dataset[(dataset['R21'].notna())]
+
+def plot_fourier_space(dataset, target_R21, target_phi21, target_R31, target_phi31, model_label, star_label, n_neighbors=15, min_dist=0.1):
+    """Projects 4D accessible Fourier space down to 2D using UMAP.
+
+    Filters the provided dataset for valid 4D Fourier features (R21, phi21, R31, phi31).
+    Standardizes the features and uses UMAP to generate a 2D topological mapping. 
+    The empirical target star is transformed using the same fitted UMAP model to 
+    accurately display its mathematical distance from the simulated points.
+
+    
+    TODO: It calculates UMAP anew for every star; its not needed!! We should cache this for next stars
+    Args:
+        dataset (pd.DataFrame): DataFrame containing the simulation results.
+        target_R21 (float): Target amplitude ratio R21.
+        target_phi21 (float): Target phase difference phi21 (radians).
+        target_R31 (float): Target amplitude ratio R31.
+        target_phi31 (float): Target phase difference phi31 (radians).
+        model_label (str): Legend label for simulated points.
+        star_label (str): Legend label for the target star.
+        n_neighbors (int, optional): UMAP local neighborhood size. Defaults to 15.
+        min_dist (float, optional): UMAP point packing density. Defaults to 0.1.
+
+    Returns:
+        None: The function opens a matplotlib display window and does not return a value.
+    """
+
+    print("=== Plotting UMAP 4D Fourier Space ===")
+
+    features = ['R21', 'phi21', 'R31', 'phi31']
+    df_filtered = dataset.dropna(subset=features).copy()
+    
     if df_filtered.empty:
-        print("MAP_MAKER.py: df_filtered is empty - No valid Fourier features")
+        print("MAP_MAKER.py: df_filtered is empty - No valid 4D Fourier features")
         return
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.scatter(df_filtered['phi21'], df_filtered['R21'], c='blue', alpha=0.3, s=10, label=model_label) # theoretically possible points
-    ax.scatter(target_phi21, target_R21, c='red', marker='*', s=50, edgecolor='black', label=star_label) # Target Star
+    scaler = StandardScaler()
+    X = df_filtered[features].values
+    X_target = np.array([[target_R21, target_phi21, target_R31, target_phi31]])
+
+    X_scaled = scaler.fit_transform(X)
+    X_target_scaled = scaler.transform(X_target)
+
+    reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist, random_state=42)
+    X_umap = reducer.fit_transform(X_scaled)
+
+    target_umap = reducer.transform(X_target_scaled) 
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.scatter(X_umap[:, 0], X_umap[:, 1], c='blue', alpha=0.3, s=10, label=model_label)
     
-    plt.title("Fourier Space with Target Star")
-    plt.xlabel(r"Phase Difference $\phi_{21}$ (radians)")
-    plt.ylabel(r"Amplitude Ratio $R_{21}$")
-    plt.xlim(0, 2*np.pi)
+    ax.scatter(target_umap[:, 0], target_umap[:, 1], c='red', marker='*', s=50, edgecolor='black', zorder=5, label=star_label)
+    
+    plt.title("UMAP Fourier Space 2D Projection ")
+    plt.xlabel("DIM 1")
+    plt.ylabel("DIM 2")
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
     plt.show()

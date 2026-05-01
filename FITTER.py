@@ -4,13 +4,29 @@ import COMMON as com
 import tomllib
 
 
-
-# ------------------------------------------------------------
-# PHYSICS ENGINE & FEATURE EXTRACTION
-# ------------------------------------------------------------
 def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=500, cutoff=150):
-    """Runs a single simulation and returns the steady-state x, y, z arrays."""
+    """Simulates the dynamical system and returns the trajectory after 't_skip' time.
 
+    Integrates the system's differential equations using a Runge-Kutta method. 
+    Runs the system for 't_skip', then records the trajectory for the specified 't_end' duration.
+    Aborts simulation if trajectory diverges beyond 'cutoff'.
+
+    Args:
+        params (dict): Physical parameters dictionary.
+        init_xyz (tuple, optional): Initial conditions (x, y, z). Defaults to (0.1, 0.0, 0.0).
+        dt (float, optional): Integration time step. Defaults to 0.01.
+        t_skip (float, optional): Time to simulate and discard before recording. Defaults to 100.
+        t_end (float, optional): Total duration of the recorded simulation. Defaults to 500.
+        cutoff (float, optional): Divergence Threshold. System is considered invalid if abs(x) > cutoff. Defaults to 150.
+
+    Returns:
+        tuple: Numpy arrays representing the trajectory.
+            - x_arr (np.array): X-coordinates of the trajectory.
+            - y_arr (np.array): Y-coordinates of the trajectory.
+            - z_arr (np.array): Z-coordinates of the trajectory.
+    
+            
+    """
     x, y, z = init_xyz
     N_skip = int(t_skip / dt)
     N_sim = int(t_end / dt)
@@ -31,29 +47,48 @@ def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=
     return x_arr, y_arr, z_arr
 
 
-# ------------------------------------------------------------
-# THE COST FUNCTION (Fitness test)
-# ------------------------------------------------------------
-def cost_function(param_array, target_featuers, param_names, dt, t_skip, t_end):
-    """Calculates how 'wrong' the parameters are, penalizing quasi-periodicity."""
+def cost_function(param_array, target_featuers, param_names, dt, t_skip, t_end, penalty=1e6):
+    """Evaluates the fitness of a parameter set against target observational data.
+
+    Core objective function for the Differential Evolution optimizer. 
+    Penalizes trajectories that:
+        - are divergent,
+        - fail to oscillate (cross the mean),
+        - have unphysically small amplitudes,
+        - exhibit chaotic/quasi-periodic peak variations.
+
+    Calculates a scalarized Fourier distance between the simulated wave and the target star for valid limit cycles.
+
+    Args:
+        param_array (list or array-like): Parameter values being tested by the optimizer in a given iteration.
+        target_featuers (dict): The empirical target values to fit.
+        param_names (list of str): The string keys corresponding to 'param_array'.
+        dt (float): Integration time step.
+        t_skip (float): Skips calculations until t_skip.
+        t_end (float): Ends calculations at t_end.
+        penalty (float, optional): Penalty returned for invalid trajectories. Defaults to 1e6.
+    Returns:
+        float: Parameter cost/error. Lower score suggests better fit. Returns penalty for invalid trajectories.
+    """
+
     params = {name: val for name, val in zip(param_names, param_array)}
     
     x_array, y_array, z_array = get_trajectory(params, dt=dt, t_skip=t_skip, t_end=t_end)
-    if x_array is None: return 1e6 
+    if x_array is None: return penalty
 
     z_mean = np.mean(z_array)
     has_crossed = (z_array[:-1] <= z_mean) & (z_array[1:] > z_mean)
     where_crossed = np.where(has_crossed)[0]
-    if len(where_crossed) < 2: return 1e6 
+    if len(where_crossed) < 2: return penalty 
 
     crossed_x = x_array[where_crossed]
     x_amplitude = np.max(x_array) - np.min(x_array)
     if x_amplitude < 0.5: 
-        return 1e6
+        return penalty
     periodicity_error = np.std(crossed_x) / (x_amplitude + 1e-9) 
     
     features = com.get_fourier_features(x_array, dt)
-    if features is None: return 1e6 
+    if features is None: return penalty
         
     error_R21 = (features["R21"] - target_featuers["R21"])**2
     diff_phi = abs(features["phi21"] - target_featuers["phi21"])
@@ -75,9 +110,21 @@ def cost_function(param_array, target_featuers, param_names, dt, t_skip, t_end):
     return total_cost
 
 def create_seeded_population(base_params, bounds, popsize=100, spread_fraction=0.05):
-    """
-    Creates an initial population centered around a known good guess.
-    spread_fraction controls how tight the cluster is (0.05 = 5% of the bound range).
+    """Generates an initial population cluster around a starting point.
+
+    Creates a Gaussian cloud of initial points centered on a provided guess instead of 
+    starting with uniform distribution across the parameter space. In assumption this 
+    should significantly accelerate convergence when tuning a model.
+
+    Args:
+        base_params (list or array-like): The central parameter values to build around.
+        bounds (list of tuples): The (min, max) absolute limits for each parameter.
+        popsize (int, optional): Total number of individuals in the population. Defaults to 100.
+        spread_fraction (float, optional): Standard deviation of the Gaussian noise applied to the base parameters, 
+                                           expressed as a fraction of the total bound range. Defaults to 0.05 (5%).
+
+    Returns:
+        np.ndarray: 2D array (popsize, num_params) containing the initialized population, clipped to keep values within the specified bounds.
     """
     num_params = len(bounds)
     population = np.zeros((popsize, num_params))
@@ -96,11 +143,14 @@ def create_seeded_population(base_params, bounds, popsize=100, spread_fraction=0
     return population
 
 
-
-# ------------------------------------------------------------
-# MAIN RUN
-# ------------------------------------------------------------
 def main():
+    """Executes the inverse-problem optimization pipeline using Differential Evolution.
+
+    1. Reads configuration settings and a starting parameter guess from 'config.toml'. 
+    2. Initializes a seeded population.
+    3. Runs a parallelized Differential Evolution optimizer to find parameters that best reproduce the target star's empirical Fourier features. 
+    4. Evaluates and saves the best fit to the configuration file.
+    """
     try:
         with open("config.toml", "rb") as conf:
             config = tomllib.load(conf)

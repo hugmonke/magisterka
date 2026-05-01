@@ -5,6 +5,23 @@ import tomllib
 
 
 def plot_poincare_plane(ax, plane, x, y, z, alpha=0.2):
+    """Visualizes a 2D Poincaré section plane within a 3D phase space plot.
+
+    Calculates a meshgrid surface based on the plane equation coefficients.
+    Dynamically determines which coordinate to solve for based on the nonzero coefficients to avoid division by zero. 
+    Resulting surface is constrained to the bounds of the provided trajectory data.
+
+    Args:
+        ax (matplotlib.axes._subplots.Axes3DSubplot): Plot where the surface will be drawn.
+        plane (tuple): Plane equation coefficients.
+        x (array-like): Trajectory X-coordinates, used to define grid boundaries.
+        y (array-like): Trajectory Y-coordinates, used to define grid boundaries.
+        z (array-like): Trajectory Z-coordinates, used to define grid boundaries.
+        alpha (float, optional): Transparency level of the plane surface. Defaults to 0.2.
+
+    Raises:
+        ValueError: If all coefficients (a, b, c) are zero, rendering the plane is impossible.
+    """
     a, b, c, d = plane
     grid_size = 50
     x_range = np.linspace(min(x), max(x), grid_size)
@@ -26,6 +43,13 @@ def plot_poincare_plane(ax, plane, x, y, z, alpha=0.2):
     ax.plot_surface(X, Y, Z, alpha=alpha)
 
 def main():
+    """Orchestrates the visual analysis and classification of saved stellar models.
+
+    1. Loads parameter sets from 'config.toml', 
+    2. Reconstructs 3D trajectories, and 
+    3. Performs a multi-stage classification. 
+    4. Generates a four-panel plot of time series, 3D phase space, intersecting Poincaré plane, and 2D Poincaré map.
+    """
     with open("config.toml", "rb") as conf:
         config = tomllib.load(conf)
 
@@ -68,24 +92,10 @@ def main():
         entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y)
         state = com.classify(entropy=entropy, lle=lle)  
         
-        if state in ["CHAOTIC", "QUASI_PERIODIC", "PERIODIC"]:
-            # Double check if PERIODIC, not DIVERGENT (The wave doesnt run away)
-            drift_threshold = 0.05 # Chosen arbitrally, works best, allows some numerical errors
-            half_idx = len(x)//2 
-            drift_ratio = abs(np.mean(x[:half_idx]) - np.mean(x[half_idx:])) / (np.max(x) - np.min(x) + 1e-9)
-            amp_start = np.max(x[:half_idx]) - np.min(x[:half_idx])
-            amp_end = np.max(x[half_idx:]) - np.min(x[half_idx:])
-            amp_growth = abs(amp_end - amp_start) / (amp_start + 1e-9)
-                    
-            if drift_ratio >= 0.05 or amp_growth >= 0.05: 
-                state = "DIVERGENT"
-            else:
-                features = com.get_fourier_features(x, dt=DT) 
-                if features: 
-                    R21, PHI21 = features["R21"], features["phi21"]
-                    R31, PHI31 = features["R31"], features["phi31"]
-                else: 
-                    state = "DIVERGENT"
+        tolerance = 0.05
+        state, features = com.validate_state_and_features(x_array=x, dt=DT, state=state, tolerance=tolerance)
+        R21, phi21 = features["R21"], features["phi21"]
+        R31, phi31 = features["R31"], features["phi31"]
             
         print(f"Classified State: {state} | Entropy: {entropy:.4f} | LLE: {lle:.4f}")
         with open("simulation_results.txt", "a", encoding="utf-8") as file:
@@ -93,9 +103,6 @@ def main():
             file.write(log_line)
         print("-> Results appended to simulation_results.txt")
 
-        # ------------------------------------------------------------
-        # PLOTS
-        # ------------------------------------------------------------
 
         fig = plt.figure(figsize=(10, 8))
 

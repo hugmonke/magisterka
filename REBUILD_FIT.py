@@ -4,6 +4,8 @@ import ast
 import re
 import COMMON as com # Make sure your COMMON.py is in the same folder
 
+# AI GENERATED - I HOPE ITS A TEMP FILE
+
 def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=500, cutoff=150):
     """Runs a single simulation and returns the steady-state x, y, z arrays."""
 
@@ -25,50 +27,8 @@ def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=
         x_arr[i], y_arr[i], z_arr[i] = x, y, z
         
     return x_arr, y_arr, z_arr
-# ------------------------------------------------------------
-# FOURIER FEATURES (Your exact function)
-# ------------------------------------------------------------
-def get_fourier_features(x_array, dt):
-    """Performs FFT on the simulated trajectory to extract R21 and phi21."""
-    N = len(x_array)
-    x_centered = x_array - np.mean(x_array) # center wave
-    
-    # Optional: If you want to use the Hanning window we discussed, uncomment this:
-    # x_centered = x_centered * np.hanning(N)
 
-    fft_vals = rfft(x_centered)
-    amps = np.abs(fft_vals)/N
-    phases = np.angle(fft_vals)
-    freqs = rfftfreq(N, dt)
-    
-    # FUNDAMENTAL FREQUENCY
-    idx_1 = np.argmax(amps[1:]) + 1
-    f_1 = freqs[idx_1]
-    A_1 = amps[idx_1]
-    phi_1 = phases[idx_1]
-    
-    if A_1 < 1e-10: return None
-        
-    # HARMONIC
-    idx_2 = np.argmin(np.abs(freqs - 2*f_1))
-    A_2 = amps[idx_2]
-    phi_2 = phases[idx_2]
-    
-    R21 = A_2 / A_1
-    phi21 = (phi_2 - 2*phi_1) % (2*np.pi)
-    
-    idx_3 = np.argmin(np.abs(freqs - 3*f_1))
-    A_3 = amps[idx_3]
-    phi_3 = phases[idx_3]
-    
-    R31 = A_3 / A_1
-    phi31 = (phi_3 - 3*phi_1) % (2*np.pi)
-    
-    return {"R21": R21, "phi21": phi21, "R31": R31, "phi31": phi31}
 
-# ------------------------------------------------------------
-# FILE PROCESSOR
-# ------------------------------------------------------------
 def rebuild_log_file(input_filename, output_filename, dt=0.01):
     print(f"Reading from {input_filename}...")
     
@@ -102,7 +62,7 @@ def rebuild_log_file(input_filename, output_filename, dt=0.01):
                 
                 # FIX 2: Check if it actually survived before running FFT
                 if x_array is not None:
-                    fourier = get_fourier_features(x_array, dt)
+                    fourier = com.get_fourier_features(x_array, dt)
                 else:
                     fourier = None
                     
