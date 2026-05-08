@@ -5,7 +5,9 @@ import ast
 import re
 import os
 import COMMON as com
-
+import umap
+from sklearn.preprocessing import StandardScaler
+import matplotlib.pyplot as plt
 
 def check_missing_cols(dataset, param_arr):
     """Validates the presence of required parameter columns in the dataset.
@@ -158,6 +160,70 @@ def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
     return df
 
 
+def plot_empirical_over_simulated_fourier(dataset, filepath="ogle_stars.txt", n_neighbors=15, min_dist=0.1):
+    """
+    Fits UMAP on the simulated Tanaka-Takeuti dataset, then reads an entire 
+    OGLE empirical catalog and projects all stars simultaneously onto the same plot.
+    """
+
+    print("=== Processing Simulation Data ===")
+    features = ['R21', 'phi21', 'R31', 'phi31']
+    df_sim = dataset.dropna(subset=features).copy()
+    
+    if df_sim.empty:
+        print("ERROR: No valid simulated Fourier features found.")
+        return
+
+    scaler = StandardScaler()
+    X_sim_scaled = scaler.fit_transform(df_sim[features].values)
+    
+    print("Fitting UMAP to simulated Fourier space...")
+    reducer = umap.UMAP(n_neighbors=n_neighbors, min_dist=min_dist, random_state=1)
+    X_sim_umap = reducer.fit_transform(X_sim_scaled)
+
+
+    print(f"=== Reading Empirical Data from {filepath} ===")
+    col_names = [
+        'ID', 'Type', 'RA', 'Decl', 'I', 'V', 'V_I', 'P_1', 'dP_1', 
+        'T0_1', 'A_1', 'R21_1', 'phi21_1', 'R31_1', 'phi31_1', 
+        'ID_OGLE_II', 'ID_OGLE_III', 'ID_OGLE_IV', 'ID_OTHER', 'REMARKS'
+    ]
+    
+    df_emp = pd.read_csv(filepath, sep=r'\s+', comment='#', names=col_names, na_values=['-99.99'])
+    df_emp_clean = df_emp.dropna(subset=['R21_1', 'phi21_1', 'R31_1', 'phi31_1']).copy()
+    print(f"Loaded {len(df_emp_clean)} valid empirical stars.")
+
+    print("Projecting empirical stars into the simulated UMAP topology...")
+    # Extract in the exact same order as the simulations
+    emp_features = df_emp_clean[['R21_1', 'phi21_1', 'R31_1', 'phi31_1']].values
+    
+    X_emp_scaled = scaler.transform(emp_features)
+    X_emp_umap = reducer.transform(X_emp_scaled)
+
+    print("Rendering plot")
+    fig, ax = plt.subplots(figsize=(14, 10))
+    
+    # Map simulation colors
+    color_map = {"CHAOTIC": "red", "STABLE": "green", "PERIODIC": "blue", 
+                 "QUASI_PERIODIC": "purple", "DIVERGENT": "orange"}
+    sim_colors = df_sim['State'].map(color_map).fillna('black').tolist()
+
+    ax.scatter(X_sim_umap[:, 0], X_sim_umap[:, 1], c=sim_colors, alpha=0.4, s=15, edgecolors='none')
+    ax.scatter(X_emp_umap[:, 0], X_emp_umap[:, 1], c='black', alpha=0.03, s=1, edgecolors='none')
+    for state_type, color in color_map.items():
+        if state_type in df_sim['State'].values:
+            ax.scatter([], [], c=color, label=f"Model: {state_type}", s=50)
+            
+    ax.scatter([], [], c='black', label="OGLE Empirical Target Density", s=50, alpha=0.7)
+
+    plt.title("UMAP Fourier Space: Tanaka-Takeuti Model vs. OGLE Catalog")
+    plt.xlabel("DIM 1")
+    plt.ylabel("DIM 2")
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.show()
+
 def main():
     """Executes the main parameter mapping and visualization pipeline.
 
@@ -186,26 +252,52 @@ def main():
     RANDOM_STATE = config.get("RANDOM_STATE", 1)
 
     # PLOT PARAMETERS
-    PLOT_PARAM_SPACE = True
+    PLOT_PARAM_SPACE = False
     PLOT_FOURIER_SPACE = True
+    PLOT_EMPIRICAL_SPACE = False
 
     # FOURIER SPACE PARAMETERS
     TOP_NEIGH = 1 
     MODEL_LABEL = 'Tanaka-Takeuti Model'
-    TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
-                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00050', 'R21': 0.443, 'phi21': 4.126, 'R31': 0.346, 'phi31': 2.432}
-                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00254', 'R21': 0.467, 'phi21': 4.124, 'R31': 0.368, 'phi31': 2.193}
-                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00498', 'R21': 0.12, 'phi21': 4.778, 'R31': 0.0, 'phi31': 0.0}
-                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00701', 'R21': 0.134, 'phi21': 4.937, 'R31': 0.0, 'phi31': 0.0} # Phased with P1
-                    ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00904', 'R21': 0.47, 'phi21': 4.12, 'R31': 0.373, 'phi31': 2.122} 
-                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0034', 'R21': 0.167, 'phi21': 4.749, 'R31': 0.103, 'phi31': 5.208}
-                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0031', 'R21': 0.244, 'phi21': 4.457, 'R31': 0.101, 'phi31': 2.222}
-                    ,{'STAR_LABEL': 'OGLE-LMC-CEP-0050', 'R21': 0.367, 'phi21': 5.342, 'R31': 0.184, 'phi31': 3.578}
+    # TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-24912', 'R21': 0.129, 'phi21': 0.334, 'R31': 0.077, 'phi31': 0.952}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00727', 'R21': 0.157, 'phi21': 2.920, 'R31': 0.118, 'phi31': 2.546}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-40779', 'R21': 0.227, 'phi21': 4.613, 'R31': 0.098 	, 'phi31': 2.999}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00050', 'R21': 0.443, 'phi21': 4.126, 'R31': 0.346, 'phi31': 2.432}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00254', 'R21': 0.467, 'phi21': 4.124, 'R31': 0.368, 'phi31': 2.193}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00498', 'R21': 0.12, 'phi21': 4.778, 'R31': 0.0, 'phi31': 0.0}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00701', 'R21': 0.134, 'phi21': 4.937, 'R31': 0.0, 'phi31': 0.0} # Phased with P1
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00904', 'R21': 0.47, 'phi21': 4.12, 'R31': 0.373, 'phi31': 2.122} 
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-CEP-0034', 'R21': 0.167, 'phi21': 4.749, 'R31': 0.103, 'phi31': 5.208}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-CEP-0031', 'R21': 0.244, 'phi21': 4.457, 'R31': 0.101, 'phi31': 2.222}
+    #                 ,{'STAR_LABEL': 'OGLE-LMC-CEP-0050', 'R21': 0.367, 'phi21': 5.342, 'R31': 0.184, 'phi31': 3.578}
                     #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00029', 'R21': 0.101, 'phi21': 0.098}
                     #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
-        ]
+     #   ]
     
-
+    TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168},
+    {
+        'STAR_LABEL': 'OGLE-BLG-RRLYR-00237', 
+        'R21': 0.129, 
+        'phi21': 1.492, 
+        'R31': 0.09, 
+        'phi31': 1.764
+    },
+    {
+        'STAR_LABEL': 'OGLE-BLG-RRLYR-36125', 
+        'R21': 0.179, 
+        'phi21': 0.596, 
+        'R31': 0.055, 
+        'phi31': 0.818
+    },
+    {
+        'STAR_LABEL': 'OGLE-BLG-RRLYR-23846', 
+        'R21': 0.07, 
+        'phi21': 1.032, 
+        'R31': 0.075, 
+        'phi31': 0.157
+    }
+]
 
     dataset = parse_log_file(FILENAME
                              ,FILTER_DIVERGENT=FILTER_DIVERGENT
@@ -236,18 +328,39 @@ def main():
                                 , min_dist=MIN_DIST
                                 , random_state=RANDOM_STATE
                                 )
-    
+
+
     if PLOT_FOURIER_SPACE:
+        print("=== Plotting UMAP 4D Fourier Space ===")
+
+        features = ['R21', 'phi21', 'R31', 'phi31']
+        df_filtered = dataset.dropna(subset=features).copy()
+    
+        if df_filtered.empty:
+            print("MAP_MAKER.py: df_filtered is empty - No valid 4D Fourier features")
+            return
+        
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(df_filtered[features].values)
+        
+        reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, random_state=1)
+        X_umap_cached = reducer.fit_transform(X_scaled)
+
         for target_star in TARGET_STARS:
             print(f"PROCESSING TARGET STAR: {target_star['STAR_LABEL']}")
-            com.plot_fourier_space(dataset=dataset
-                            , target_R21=target_star['R21']
-                            , target_phi21=target_star['phi21']
-                            , target_R31=target_star.get('R31', 0)
-                            , target_phi31=target_star.get('phi31', 0)
-                            , model_label=MODEL_LABEL
-                            , star_label=target_star['STAR_LABEL']
-                            )
+            com.plot_fourier_space(X_umap = X_umap_cached
+                                  , df_states=df_filtered['State']
+                                  , df_params = df_filtered[param_arr]
+                                  , df_features = df_filtered[features]
+                                  , reducer=reducer
+                                  , scaler=scaler
+                                  , target_R21=target_star['R21']
+                                  , target_phi21=target_star['phi21']
+                                  , target_R31=target_star.get('R31', 0)
+                                  , target_phi31=target_star.get('phi31', 0)
+                                  , model_label=MODEL_LABEL
+                                  , star_label=target_star['STAR_LABEL']
+                                  )
 
             print_and_save_neighbours(dataset=dataset
                                     , param_arr=param_arr
@@ -258,6 +371,6 @@ def main():
                                     , target_phi31=target_star.get('phi31', 0)
                                     , TOP_N=TOP_NEIGH
                                     )
-
-
+    if PLOT_EMPIRICAL_SPACE:
+        plot_empirical_over_simulated_fourier
 if __name__ == "__main__": main()

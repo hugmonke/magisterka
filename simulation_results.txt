@@ -1,0 +1,1 @@
+Classified State: PERIODIC       | Actual State:          | Entropy: 0.0944 | LLE: 0.0018 | Params: {'alpha': 2.9459273693493553, 'mu': 2.167354493689009, 'gamma': 4.863529860598836, 'p': 6.312232881756653, 's': 0.1403086205998656} | T_SKIP: 500 | T_END: 1000

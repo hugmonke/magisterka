@@ -34,13 +34,20 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
     
     with open(filename, "a", encoding="utf-8") as file:
         total_sim = 0
-        print("Post-processing trajectories and calculating entropy, saving to sim_results_space.txt")
+        print("Calculating trajectories and entropy, saving results to sim_results_space.txt")
+        if params is None or params == {}:
+            master_params = com.get_parameteres(size=sim_num)
+        else:
+            master_params = {param: np.array(val).flatten() for param, val in params.items()}
+
         while total_sim < sim_num:
+            cur_size = min(batch_size, sim_num - total_sim)
+            batch_params = {k: v[total_sim : total_sim + cur_size] for k, v in master_params.items()}
 
             cur_size = min(batch_size, sim_num - total_sim)
             params = com.get_parameteres(size=cur_size)
             lle_all, valid_mask, x_all, y_all, z_all = com.solve_and_get_lle(init_xyz = init_xyz
-                                                                            , params = params
+                                                                            , params = batch_params
                                                                             , dt = dt
                                                                             , t_skip = t_skip
                                                                             , t_end = t_end
@@ -66,7 +73,7 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
                     gamma, p, s = run_data['gamma'], run_data['p'], run_data['s']
                     
                     mean_pos = (np.mean(x), np.mean(y), np.mean(z))
-                    v_vec = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+                    v_vec = com.get_derivatives_numba(x[0], y[0], z[0], alpha, mu, gamma, p, s)
                     plane = com.generate_plane(point=mean_pos, normal=v_vec)
                     poinc_x, poinc_y, _ = com.poincare_map(x=x, y=y, z=z, plane=plane)
 
@@ -74,8 +81,8 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
                     state = com.classify(entropy, lle)
                     
                     state, features = com.validate_state_and_features(x_array=x, dt=dt, state=state, tolerance=tolerance)
-                    R21, phi21 = features["R21"], features["phi21"]
-                    R31, phi31 = features["R31"], features["phi31"]
+                    R21, PHI21 = features["R21"], features["phi21"]
+                    R31, PHI31 = features["R31"], features["phi31"]
 
                     run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
                 results.append(run_data)
@@ -149,7 +156,7 @@ def main():
     T_SKIP          = config.get("T_SKIP", 100)
     T_END           = config.get("T_END", 1000)
     CUTOFF          = config.get("CUTOFF", 1e6)
-    TOLERANCE       = config.get("TOLERANCE", 0.1)
+    TOLERANCE       = config.get("TOLERANCE", 0.05)
     SIM_NUM         = config.get("SIM_NUM", 1_000)
     PRINT_EVERY     = config.get("PRINT_EVERY", 50) 
     BATCH_SIZE      = config.get("BATCH_SIZE", 1000) 

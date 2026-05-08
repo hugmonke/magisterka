@@ -60,7 +60,7 @@ def main():
     CUTOFF      = config.get("CUTOFF", 1e6)
     SIZE        = config.get("SIZE", 1)
     PARAMS_LIST = config.get("SAVED_PARAMS", [{}])
-
+    TOLERANCE   = config.get("TOLERANCE", 0.05)
     for PARAMS in PARAMS_LIST:
         params = com.get_parameteres(params=PARAMS, size=1)
         lle, valid_mask, x, y, z = com.solve_and_get_lle(init_xyz = INIT_XYZ
@@ -82,18 +82,26 @@ def main():
 
         alpha, mu = params["alpha"], params["mu"]
         gamma, p, s = params["gamma"], params["p"], params["s"]
-        x, y, z, lle = x[:, 0], y[:, 0], z[:, 0], lle[0]
 
+        # Re-integrate with Scipy for the actual plotting & exact Fourier features
+        scipy_x, scipy_y, scipy_z = com.runge_kutta_scipy(params, init_xyz=INIT_XYZ, dt_eval=DT, t_skip=T_SKIP, t_record=T_END, cutoff=CUTOFF)
+        if scipy_x is not None:
+            # Overwrite the Numba arrays with the Scipy arrays for the plot
+            x, y, z = scipy_x, scipy_y, scipy_z
+        else:
+            print("Warning: Scipy disagreed with Numba and diverged. Using Numba track.")
+            x, y, z = x[:, 0], y[:, 0], z[:, 0]
+
+        lle = lle[0]
         mean_x, mean_y, mean_z = np.mean(x), np.mean(y), np.mean(z)
-        dx0, dy0, dz0 = com.get_derivatives(x=x[0], y=y[0], z=z[0], alpha=alpha, mu=mu, gamma=gamma, p=p, s=s)
+        dx0, dy0, dz0 = com.get_derivatives_numba(x[0], y[0], z[0], alpha, mu, gamma, p, s)
         plane = com.generate_plane(point=(mean_x, mean_y, mean_z), normal=(dx0, dy0, dz0))
         poinc_x, poinc_y, poinc_z = com.poincare_map(x=x, y=y, z=z, plane=plane)
 
         entropy = com.shannon_entropy(poinc_x=poinc_x, poinc_y=poinc_y)
         state = com.classify(entropy=entropy, lle=lle)  
         
-        tolerance = 0.05
-        state, features = com.validate_state_and_features(x_array=x, dt=DT, state=state, tolerance=tolerance)
+        state, features = com.validate_state_and_features(x_array=x, dt=DT, state=state, tolerance=TOLERANCE)
         R21, phi21 = features["R21"], features["phi21"]
         R31, phi31 = features["R31"], features["phi31"]
             
