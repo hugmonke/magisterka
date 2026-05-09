@@ -9,6 +9,16 @@ import umap
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 
+
+def fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, target_R21, target_R31 = 0, df = None):
+    if df is None:
+        raise ValueError("df can't be None!")
+    return np.sqrt(
+    ((df['R21'] - target_R21)**2) / var_R21 + 
+    ((wrap_phi21)**2) / var_phi21 +
+    ((df['R31'] - target_R31)**2) / var_R31 + 
+    ((wrap_phi31)**2) / var_phi31)
+
 def check_missing_cols(dataset, param_arr):
     """Validates the presence of required parameter columns in the dataset.
 
@@ -67,7 +77,7 @@ def print_and_save_neighbours(dataset, param_arr, star_label, target_R21, target
         var_phi21 = var_phi21 if var_phi21 > 0 else 1.0
         var_R31 = var_R31 if var_R31 > 0 else 1.0
         var_phi31 = var_phi31 if var_phi31 > 0 else 1.0
-
+        df_filtered['FOURIER_DIST'] = fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, target_R21, target_R31, df_filtered)
         df_filtered['FOURIER_DIST'] = np.sqrt(
             ((df_filtered['R21'] - target_R21)**2) / var_R21 + 
             ((wrap_phi21)**2) / var_phi21 +
@@ -259,6 +269,10 @@ def main():
     # FOURIER SPACE PARAMETERS
     TOP_NEIGH = 1 
     MODEL_LABEL = 'Tanaka-Takeuti Model'
+
+    # TEST STARS PARAMETERS
+    PLOT_TEST_STARS = True
+
     # TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
     #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-24912', 'R21': 0.129, 'phi21': 0.334, 'R31': 0.077, 'phi31': 0.952}
     #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00727', 'R21': 0.157, 'phi21': 2.920, 'R31': 0.118, 'phi31': 2.546}
@@ -275,29 +289,11 @@ def main():
                     #,{'STAR_LABEL': 'OGLE-LMC-RRLYR-00001', 'R21': 0.545, 'phi21': 4.395}
      #   ]
     
-    TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168},
-    {
-        'STAR_LABEL': 'OGLE-BLG-RRLYR-00237', 
-        'R21': 0.129, 
-        'phi21': 1.492, 
-        'R31': 0.09, 
-        'phi31': 1.764
-    },
-    {
-        'STAR_LABEL': 'OGLE-BLG-RRLYR-36125', 
-        'R21': 0.179, 
-        'phi21': 0.596, 
-        'R31': 0.055, 
-        'phi31': 0.818
-    },
-    {
-        'STAR_LABEL': 'OGLE-BLG-RRLYR-23846', 
-        'R21': 0.07, 
-        'phi21': 1.032, 
-        'R31': 0.075, 
-        'phi31': 0.157
-    }
-]
+    TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
+                    , {'STAR_LABEL': 'OGLE-BLG-RRLYR-00237', 'R21': 0.129, 'phi21': 1.492, 'R31': 0.09, 'phi31': 1.764}
+                    , {'STAR_LABEL': 'OGLE-BLG-RRLYR-36125', 'R21': 0.179, 'phi21': 0.596, 'R31': 0.055, 'phi31': 0.818}
+                    , {'STAR_LABEL': 'OGLE-BLG-RRLYR-23846', 'R21': 0.07, 'phi21': 1.032, 'R31': 0.075, 'phi31': 0.157}
+                    ]
 
     dataset = parse_log_file(FILENAME
                              ,FILTER_DIVERGENT=FILTER_DIVERGENT
@@ -317,7 +313,7 @@ def main():
     dataset = dataset.sort_values('priority').drop(columns=['priority']).reset_index(drop=True)
     param_arr = ['alpha', 'mu', 'gamma', 'p', 's']
     check_missing_cols(dataset=dataset
-                       ,param_arr=param_arr
+                       , param_arr=param_arr
                        )
     df_params, df_states = dataset[param_arr], dataset['State']
 
@@ -345,6 +341,73 @@ def main():
         
         reducer = umap.UMAP(n_neighbors=N_NEIGHBORS, min_dist=MIN_DIST, random_state=1)
         X_umap_cached = reducer.fit_transform(X_scaled)
+        if PLOT_TEST_STARS:
+            try:
+                with open("test_stars.toml", "rb") as test_config:
+                    test_stars_data = tomllib.load(test_config)
+                    test_stars_params = test_stars_data.get("SAVED_PARAMS", [])
+                    TEST_STARS = []
+                    INIT_XYZ        = config.get("INIT_XYZ", [0.1, 0.0, 0.0])
+                    DT              = config.get("DT", 0.01)
+                    T_SKIP          = config.get("T_SKIP", 500)
+                    T_END           = config.get("T_END", 1000)
+                    CUTOFF          = config.get("CUTOFF", 1e6)
+                    if test_stars_params:
+                        print("=== Extracting Fourier Features for Test Stars ===\n")
+                        for i, params in enumerate(test_stars_params):
+                            print(f"Simulating test star nr.: {i}")
+                            x, _, _ = com.runge_kutta_numba(params=params, init_xyz=INIT_XYZ, dt_eval=DT, t_skip=T_SKIP, t_record=T_END, cutoff=CUTOFF)
+                            if x is not None:
+                                fourier_features = com.get_fourier_features(x, dt=DT)
+                                if fourier_features:
+                                    star_data = params.copy()
+                                    star_data.update(fourier_features)
+                                    star_data['STAR_LABEL'] = f"TEST_STAR_{i}"
+                                    star_data['INDEX'] = i
+                                    TEST_STARS.append(star_data)
+                        print(f"Successfully processed {len(TEST_STARS)} test stars.\n")
+                    else:
+                        TEST_STARS = None
+            except FileNotFoundError:
+                print("WARNING: test_stars.toml not found - can't plot UMPA Fourier Feature Space.")
+                TEST_STARS = None
+
+
+            if TEST_STARS: 
+                print("=== Plotting Test Stars ===\n")
+                com.plot_test_stars_fourier_space(X_umap=X_umap_cached
+                                                  , df_states=df_filtered['State']
+                                                  , df_params=df_filtered[param_arr]
+                                                  , df_features=df_filtered[features]
+                                                  , reducer=reducer
+                                                  , scaler=scaler
+                                                  , test_stars=TEST_STARS
+                                                  )
+                for test_star in TEST_STARS:
+                    idx = test_star['INDEX']
+                    print(f"Finding neighbours for test star nr.: {idx}")
+                    
+                    diff_phi21 = np.abs(df_filtered['phi21'] - test_star['phi21'])
+                    wrap_phi21 = np.minimum(diff_phi21, 2*np.pi - diff_phi21)
+                    
+                    diff_phi31 = np.abs(df_filtered['phi31'] - test_star.get('phi31', 0))
+                    wrap_phi31 = np.minimum(diff_phi31, 2*np.pi - diff_phi31)
+                    
+                    var_R21 = df_filtered['R21'].var() if df_filtered['R21'].var() > 0 else 1
+                    var_phi21 = df_filtered['phi21'].var() if df_filtered['phi21'].var() > 0 else 1
+                    var_R31 = df_filtered['R31'].var() if df_filtered['R31'].var() > 0 else 1
+                    var_phi31 = df_filtered['phi31'].var() if df_filtered['phi31'].var() > 0 else 1
+                    
+                    df_filtered_copy = df_filtered.copy()                 
+                    df_filtered_copy['FOURIER_DIST'] = fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, test_star['R21'], test_star['R31'], df_filtered_copy)
+                    best_matches = df_filtered_copy.sort_values('FOURIER_DIST').head(TOP_NEIGH)
+                    with open("test_stars.toml", "a", encoding="utf-8") as tconf:
+                        for i in range(len(best_matches)):
+                            match = best_matches.iloc[i]
+                            tconf.write(f"\n[[TEST_STAR_{idx}_NEIGHBOUR]] # DIST: {match['FOURIER_DIST']}\n")
+                            for param in param_arr:
+                                tconf.write(f"{param} = {match[param]}\n")
+
 
         for target_star in TARGET_STARS:
             print(f"PROCESSING TARGET STAR: {target_star['STAR_LABEL']}")
@@ -372,5 +435,9 @@ def main():
                                     , TOP_N=TOP_NEIGH
                                     )
     if PLOT_EMPIRICAL_SPACE:
-        plot_empirical_over_simulated_fourier
+        plot_empirical_over_simulated_fourier(dataset=dataset
+                                              , filepath="ogle_stars.txt"
+                                              , n_neighbors=N_NEIGHBORS
+                                              , min_dist=MIN_DIST
+                                              )
 if __name__ == "__main__": main()

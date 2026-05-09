@@ -35,32 +35,6 @@ def get_trajectory(params, init_xyz=(0.1, 0.0, 0.0), dt=0.01, t_skip=100, t_end=
                                  ,  cutoff=cutoff
                                  )
 
-@njit
-def get_trajectory_numba(init_xyz, alpha, mu, gamma, p, s, dt, t_skip, t_end, cutoff):
-    """Simulates the dynamical system using Numba."""
-    N_skip = int(t_skip / dt)
-    N_sim = int(t_end / dt)
-    
-    x0, y0, z0 = init_xyz[0], init_xyz[1], init_xyz[2]
-    for _ in range(N_skip):
-        x0, y0, z0 = com.runge_kutta_numba(x0, y0, z0, dt, alpha, mu, gamma, p, s)
-        if np.abs(x0) > cutoff or np.abs(y0) > cutoff or np.isnan(x0):
-            return False, np.zeros(1), np.zeros(1), np.zeros(1)
-
-    x_arr = np.zeros(N_sim)
-    y_arr = np.zeros(N_sim)
-    z_arr = np.zeros(N_sim)
-    
-    for i in range(N_sim):
-        x0, y0, z0 = com.runge_kutta_numba(x0, y0, z0, dt, alpha, mu, gamma, p, s)
-        if np.abs(x0) > cutoff or np.abs(y0) > cutoff or np.isnan(x0):
-            return False, np.zeros(1), np.zeros(1), np.zeros(1)
-        
-        x_arr[i] = x0
-        y_arr[i] = y0
-        z_arr[i] = z0
-        
-    return True, x_arr, y_arr, z_arr
 
 def cost_function(param_array, target_features, param_names, dt, t_skip, t_end, cutoff, penalty=5e3):
     """Evaluates the fitness of a parameter set against target observational data.
@@ -88,7 +62,7 @@ def cost_function(param_array, target_features, param_names, dt, t_skip, t_end, 
 
     params = {name: val for name, val in zip(param_names, param_array)}
     
-    is_valid, x_array, y_array, z_array = get_trajectory_numba(init_xyz=(0.1, 0.0, 0.0)
+    is_valid, x_array, y_array, z_array = com.get_trajectory_numba(init_xyz=(0.1, 0.0, 0.0)
                                                           , alpha=params['alpha']
                                                           , mu=params['mu']
                                                           , gamma=params['gamma']
@@ -194,6 +168,71 @@ def create_seeded_population(base_params, bounds, popsize=100, spread_fraction=0
             
     return population
 
+def find_test(dt, t_skip, t_end, cutoff, param_arr, spread, bounds, maxiter, popsize, fit_threshold):
+    try:
+        with open("test_stars.toml", "rb") as test_config:
+            test_stars_data = tomllib.load(test_config)
+            raw_test_stars = test_stars_data.get("SAVED_PARAMS", [])
+    except FileNotFoundError:
+        raw_test_stars = False
+    if raw_test_stars:
+        print(f"Starting test benchmark on {len(raw_test_stars)} test stars.")
+        found_count = 0
+        
+        for i, test_params in enumerate(raw_test_stars):
+            test_star_label = f'Test_Star_{i}'
+            print(f">>> Fitting {test_star_label}")
+            
+            target_features = {'R21': test_params['R21']
+                               , 'phi21': test_params['phi21']
+                               , 'R31': test_params.get('R31', 0.0)
+                               , 'phi31': test_params.get('phi31', 0.0)
+                               }
+            
+            neighbours_list = test_stars_data.get(f"TEST_STAR_{i}_NEIGHBOUR", [{}])
+            if neighbours_list and neighbours_list[0]:
+                guess_params = [neighbours_list[0][k] for k in param_arr]
+                benchmark_bounds = []
+                for guess, (bound_min, bound_max) in zip(guess_params, bounds):
+                    range_span = bound_max - bound_min
+                    benchmark_bounds.append((max(bound_min, guess - range_span * spread), min(bound_max, guess + range_span * spread)))
+            else:
+                benchmark_bounds = bounds
+
+            result = differential_evolution(func=cost_function
+                                            , bounds=benchmark_bounds
+                                            , args=(target_features, param_arr, dt, t_skip, t_end, cutoff)
+                                            , strategy='randtobest1exp'
+                                            , maxiter=maxiter
+                                            , popsize=popsize
+                                            , mutation=(0.7, 1.5)
+                                            , recombination=0.9
+                                            , init='latinhypercube'
+                                            , tol=0.001
+                                            , polish=False
+                                            , disp=False  # Keep console clean during benchmark
+                                            , workers=-1
+                                            , updating='deferred'
+                                            )
+            
+            if result.fun <= fit_threshold:
+                print(f"TRAJECTORY FOUND! Final Error: {result.fun}")
+                found_count += 1
+                best_params = {name: val for name, val in zip(param_arr, result.x)}
+
+                with open("test_stars.toml", "a", encoding="utf-8") as tconf:
+                    tconf.write(f"\n[[TEST_STAR_{i}_RECOVERED]] # ERROR: {result.fun}\n")
+                    for p_key, p_val in best_params.items():
+                        tconf.write(f"{p_key} = {p_val}\n")
+            else:
+                print(f"TRAJECTORY NOT FOUND. Final Error: {result.fun}")
+                
+        print(f"\n==========================================")
+        print(f"BENCHMARK COMPLETE: Found {found_count} out of {len(raw_test_stars)} stars.")
+        print(f"==========================================")
+    else:
+        "No test stars given in test_stars.toml. Skipping."
+        return
 
 def main():
     """Executes the inverse-problem optimization pipeline using Differential Evolution.
@@ -209,26 +248,6 @@ def main():
     except FileNotFoundError as e:
         print(f"{e}: config.toml not found.")
         exit()
-
-    DT              = config.get("DT", 0.01)
-    T_SKIP          = config.get("T_SKIP", 500)
-    T_END           = config.get("T_END", 1000)
-    SPREAD          = config.get("SPREAD", 0.01)
-    POPSIZE         = config.get("POPSIZE", 100)
-    CUTOFF          = config.get("CUTOFF", 1e6)
-    MAXITER         = config.get("MAXITER", 1000)
-    # OGLE_TARGETS    = {
-    #                     "R21": 0.367
-    #                     ,"phi21": 5.342      
-    #                     ,"R31": 0.184
-    #                     ,"phi31": 3.578
-    #                   }
-    
-    #OGLE_TARGETS    = {'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168} #00002
-    OGLE_TARGETS    = {'R21': 0.179, 'phi21': 0.596, 'R31': 0.055, 'phi31': 0.818} #36125
-    print("=== STARFIT: Tanaka-Takeuti Inverse Problem ===")
-    print(f"Targeting OGLE RRab: R21={OGLE_TARGETS['R21']}, phi21={OGLE_TARGETS['phi21']}, R31={OGLE_TARGETS.get(('R31'), None)}, phi31={OGLE_TARGETS.get(('phi31'), None)}")
-    
     BOUNDS          = [
                         (-6, 9),       # alpha
                         (-6, 9),       # mu
@@ -236,69 +255,92 @@ def main():
                         (0, 7),        # p
                         (0, 7)         #
                        ]
-    
-    param_arr = ['alpha', 'mu', 'gamma', 'p', 's']
-    
+    DT              = config.get("DT", 0.01)
+    T_SKIP          = config.get("T_SKIP", 500)
+    T_END           = config.get("T_END", 1000)
+    SPREAD          = config.get("SPREAD", 0.01)
+    POPSIZE         = config.get("POPSIZE", 100)
+    CUTOFF          = config.get("CUTOFF", 1e6)
+    MAXITER         = config.get("MAXITER", 1000)
+    REAL_PARAMS     = config.get("SAVED_STAR_PARAMS", [{}])[0]
+    FIT_THRESHOLD   = config.get("FIT_TRESHOLD", 0.01)
+    FIND_TEST = True
+    FIND_REAL = True
+    PARAM_ARR       = ['alpha', 'mu', 'gamma', 'p', 's']
+    MAP_MAKER_GUESS = [REAL_PARAMS[k] for k in PARAM_ARR]
+    # OGLE_TARGETS    = {"R21": 0.367, "phi21": 5.342, "R31": 0.184, "phi31": 3.578}
+    # OGLE_TARGETS    = {'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168} #00002
+    OGLE_TARGETS    = {'R21': 0.179, 'phi21': 0.596, 'R31': 0.055, 'phi31': 0.818} #36125
+
     print("Starting Differential Evolution Optimizer\n")
+    if FIND_TEST:
+        print("=== TEST DATASET: Tanaka-Takeuti Inverse Problem ===") 
+        find_test(dt=DT
+                  , t_skip=T_SKIP
+                  , t_end=T_END
+                  , cutoff=CUTOFF
+                  , param_arr=PARAM_ARR
+                  , spread=SPREAD
+                  , bounds=BOUNDS
+                  , maxiter=MAXITER
+                  , popsize=POPSIZE
+                  , fit_threshold=FIT_THRESHOLD)
+    if FIND_REAL:
+        print("=== REAL DATASET: Tanaka-Takeuti Inverse Problem ===")
+        print(f"Targeting OGLE RRab: R21={OGLE_TARGETS['R21']}, phi21={OGLE_TARGETS['phi21']}, R31={OGLE_TARGETS.get(('R31'), None)}, phi31={OGLE_TARGETS.get(('phi31'), None)}")
+        print(f"Looking around parameters: {REAL_PARAMS}")
 
-    PARAMS = config.get("SAVED_STAR_PARAMS", [{}])[0]
-    print(f"Looking around parameters: {PARAMS}")
-    MAP_MAKER_GUESS = [PARAMS[k] for k in param_arr]
+        tight_bounds = []
+        for guess, (bound_min, bound_max) in zip(MAP_MAKER_GUESS, BOUNDS):
+            range_span = bound_max - bound_min
+            tight_bound_min = max(bound_min, guess - range_span * SPREAD)
+            tight_bound_max = min(bound_max, guess + range_span * SPREAD)
+            tight_bounds.append((tight_bound_min, tight_bound_max))
 
-    # FIX 3: Replaced the stagnant seeded_population with Dynamic Bounds & Latin Hypercube
-    # This searches the space strictly AROUND the guess, preserving DE's mutation math.
-    TIGHT_BOUNDS = []
-    for guess, (bound_min, bound_max) in zip(MAP_MAKER_GUESS, BOUNDS):
-        range_span = bound_max - bound_min
-        tight_bound_min = max(bound_min, guess - range_span * SPREAD)
-        tight_bound_max = min(bound_max, guess + range_span * SPREAD)
-        TIGHT_BOUNDS.append((tight_bound_min, tight_bound_max))
-
-    result = differential_evolution(func=cost_function
-                                    , bounds=TIGHT_BOUNDS
-                                    , args=(OGLE_TARGETS, param_arr, DT, T_SKIP, T_END, CUTOFF)
-                                    , strategy='randtobest1exp'
-                                    , maxiter=MAXITER
-                                    , popsize=POPSIZE
-                                    , mutation=(0.7, 1.5)
-                                    , recombination=0.9
-                                    , init='latinhypercube'
-                                    , tol=0.001
-                                    , polish=False
-                                    , disp=True
-                                    , workers=-1
-                                    , updating='deferred'
-                                    )
-    
-    print(f"=== OPTIMIZATION FINISHED (Final Error: {result.fun:.5f}) ===")
-    if result.fun < 0.01:
-        print("> RESULT: GOOD FIT")
-    elif result.fun < 0.2:
-        print("> RESULT: MID FIT")
-    else:
-        print("> RESULT: BAD FIT")
+        result = differential_evolution(func=cost_function
+                                        , bounds=tight_bounds
+                                        , args=(OGLE_TARGETS, PARAM_ARR, DT, T_SKIP, T_END, CUTOFF)
+                                        , strategy='randtobest1exp'
+                                        , maxiter=MAXITER
+                                        , popsize=POPSIZE
+                                        , mutation=(0.7, 1.5)
+                                        , recombination=0.9
+                                        , init='latinhypercube'
+                                        , tol=0.001
+                                        , polish=False
+                                        , disp=True
+                                        , workers=-1
+                                        , updating='deferred'
+                                        )
         
-    best_params = {name: val for name, val in zip(param_arr, result.x)}
-    final_x, final_y, final_z = get_trajectory(best_params, dt=DT, t_skip=T_SKIP, t_end=T_END, cutoff=CUTOFF)
-    if final_x is None:
-        print("\n[!] WARNING: The optimizer's best result is dynamically unstable (exploded).")
-        print("[!] It tried to cheat the cutoff. Run the optimizer again.")
-        return
-    final_features = com.get_fourier_features(final_x, dt=DT)
-    
-    print("=== Best Parameters Found ===\n")
-    for k, v in best_params.items():
-        print(f"{k:>6}: {v:.4f}")
-    print("=== Simulation vs Target ===\n")
-    print(f"R21:   Sim = {final_features['R21']}      | Target={OGLE_TARGETS['R21']}")
-    print(f"phi21: Sim = {final_features['phi21']}    | Target={OGLE_TARGETS['phi21']}")
-    print(f"R31:   Sim = {final_features['R31']}      | Target={OGLE_TARGETS['R31']}")
-    print(f"phi31: Sim = {final_features['phi31']}    | Target={OGLE_TARGETS['phi31']}")
+        print(f"=== OPTIMIZATION FINISHED (Final Error: {result.fun:.5f}) ===")
+        if result.fun < 0.01:
+            print("> RESULT: GOOD FIT")
+        elif result.fun < 0.2:
+            print("> RESULT: MID FIT")
+        else:
+            print("> RESULT: BAD FIT")
+            
+        best_params = {name: val for name, val in zip(PARAM_ARR, result.x)}
+        final_x, final_y, final_z = get_trajectory(best_params, dt=DT, t_skip=T_SKIP, t_end=T_END, cutoff=CUTOFF)
+        if final_x is None:
+            print("WARNING: The optimizer's best result is DIVERGENT. Run the optimizer again.") 
+            return
+        final_features = com.get_fourier_features(final_x, dt=DT)
+        
+        print("=== Best Parameters Found ===\n")
+        for k, v in best_params.items():
+            print(f"{k:>6}: {v:.4f}")
+        print("=== Simulation vs Target ===\n")
+        print(f"R21:   Sim = {final_features['R21']}      | Target = {OGLE_TARGETS['R21']}")
+        print(f"phi21: Sim = {final_features['phi21']}    | Target = {OGLE_TARGETS['phi21']}")
+        print(f"R31:   Sim = {final_features['R31']}      | Target = {OGLE_TARGETS['R31']}")
+        print(f"phi31: Sim = {final_features['phi31']}    | Target = {OGLE_TARGETS['phi31']}")
 
-    with open("config.toml", "a", encoding="utf-8") as conf:
-        conf.write(f"\n[[SAVED_PARAMS]] # State: OPTIMIZED_FIT_ERR_{result.fun}\n") 
-        for p_key, p_val in best_params.items():
-            conf.write(f"{p_key} = {p_val}\n")
-        print('\n-> BEST FIT SAVED TO: config.toml')
+        with open("config.toml", "a", encoding="utf-8") as conf:
+            conf.write(f"\n[[SAVED_PARAMS]] # State: OPTIMIZED_FIT_ERR_{result.fun}\n") 
+            for p_key, p_val in best_params.items():
+                conf.write(f"{p_key} = {p_val}\n")
+            print('\n-> BEST FIT SAVED TO: config.toml')
 
 if __name__ == "__main__": main()

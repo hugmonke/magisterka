@@ -23,8 +23,8 @@ def get_parameteres(params: dict = None, size: int = 1000):
     """
     if params == None or params == {}:
         params = {
-                "alpha": np.random.uniform(-3, 7, size=size)
-                ,"mu": np.random.uniform(-3, 7, size=size)
+                "alpha": np.random.uniform(-2, 6, size=size)
+                ,"mu": np.random.uniform(-2, 6, size=size)
                 ,"gamma": np.random.uniform(0.1, 5, size=size)
                 ,"p": np.random.uniform(0, 5, size=size)
                 ,"s": np.random.uniform(0, 5, size=size)
@@ -422,7 +422,34 @@ def validate_state_and_features(x_array, dt, state, tolerance=0.05):
             final_state = "DIVERGENT"
                 
     return final_state, features
+
+@njit
+def get_trajectory_numba(init_xyz, alpha, mu, gamma, p, s, dt, t_skip, t_end, cutoff):
+    """Simulates the dynamical system using Numba."""
+    N_skip = int(t_skip / dt)
+    N_sim = int(t_end / dt)
     
+    x0, y0, z0 = init_xyz[0], init_xyz[1], init_xyz[2]
+    for _ in range(N_skip):
+        x0, y0, z0 = runge_kutta_numba(x0, y0, z0, dt, alpha, mu, gamma, p, s)
+        if np.abs(x0) > cutoff or np.abs(y0) > cutoff or np.isnan(x0):
+            return False, np.zeros(1), np.zeros(1), np.zeros(1)
+
+    x_arr = np.zeros(N_sim)
+    y_arr = np.zeros(N_sim)
+    z_arr = np.zeros(N_sim)
+    
+    for i in range(N_sim):
+        x0, y0, z0 = runge_kutta_numba(x0, y0, z0, dt, alpha, mu, gamma, p, s)
+        if np.abs(x0) > cutoff or np.abs(y0) > cutoff or np.isnan(x0):
+            return False, np.zeros(1), np.zeros(1), np.zeros(1)
+        
+        x_arr[i] = x0
+        y_arr[i] = y0
+        z_arr[i] = z0
+        
+    return True, x_arr, y_arr, z_arr
+
 def plot_parameter_space(df_params, df_states, n_neighbors, min_dist, random_state):
     """UMAP dimensionality reduction and an interactive 2D projection generation.
 
@@ -558,4 +585,55 @@ def plot_fourier_space(X_umap, df_states, df_params, df_features, reducer, scale
     plt.ylabel("DIM 2")
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.legend()
+    plt.show()
+
+
+def plot_test_stars_fourier_space(X_umap, df_states, df_params, df_features, reducer, scaler, test_stars):
+    """Projects 4D accessible Fourier space down to 2D using UMAP for test stars.
+
+    Standardizes the features and uses UMAP to generate a 2D topological mapping. 
+    The synthetic test stars are transformed using the same fitted UMAP model to 
+    accurately display their mathematical distances from the simulated points.
+
+    Args:
+        X_umap (np.ndarray): UMAP projection of the simulated dataset.
+        df_states (pd.Series): Dynamical states of the simulated dataset.
+        df_params (pd.DataFrame): Input parameters for the simulated dataset.
+        df_features (pd.DataFrame): Fourier features of the simulated dataset.
+        reducer (umap.UMAP): Fitted UMAP reducer.
+        scaler (StandardScaler): Fitted feature scaler.
+        test_stars (list): List of test star dictionaries containing Fourier features.
+
+    Returns:
+        None: The function opens a matplotlib display window and does not return a value.
+    """
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    color_map = {"CHAOTIC": "red"
+                 , "STABLE": "green"
+                 , "PERIODIC": "blue"
+                 , "QUASI_PERIODIC": "black"
+                 , "DIVERGENT": "yellow"
+                 }
+    
+    colors = df_states.map(color_map).fillna('black').tolist()
+    sc = ax.scatter(X_umap[:, 0], X_umap[:, 1], c=colors, alpha=0.5, s=10, picker=True, pickradius=5)
+
+    for i, test_star in enumerate(test_stars):
+        fourier_features = np.array([[test_star['R21'], test_star['phi21'], test_star.get('R31', 0), test_star.get('phi31', 0)]])
+        test_star_umap = reducer.transform(scaler.transform(fourier_features))
+        ax.scatter(test_star_umap[:, 0], test_star_umap[:, 1], c='cyan', marker='*', s=300, edgecolor='black', zorder=6, label=test_star.get('STAR_LABEL', f'TEST_STAR_{i}'))
+
+    handles, labels = plt.gca().get_legend_handles_labels()
+    by_label = dict(zip(labels, handles))
+
+    for state_type, color in color_map.items():
+        if state_type in df_states.values:
+            by_label[state_type] = plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=color, markersize=8)
+
+    plt.title("UMAP Fourier Space 2D Projection: TEST STARS")
+    plt.xlabel("DIM 1")
+    plt.ylabel("DIM 2")
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(by_label.values(), by_label.keys(), loc='best')
     plt.show()

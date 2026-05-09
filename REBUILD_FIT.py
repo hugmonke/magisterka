@@ -2,7 +2,7 @@ import numpy as np
 from scipy.fft import rfft, rfftfreq
 import ast
 import re
-import COMMON as com # Make sure your COMMON.py is in the same folder
+import COMMON as com 
 
 # AI GENERATED - I HOPE ITS A TEMP FILE
 
