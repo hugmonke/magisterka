@@ -36,7 +36,7 @@ def check_missing_cols(dataset, param_arr):
         return
     
 
-def print_and_save_neighbours(dataset, param_arr, star_label, target_R21, target_phi21, target_R31=0, target_phi31=0, TOP_N=1):
+def print_and_save_neighbours(savefile, label, dataset, param_arr, star_label, target_R21, target_phi21, target_R31=0, target_phi31=0, TOP_N=1):
     """Finds and saves TOP_N closest simulated parameter sets to a target star.
 
     Calculates Standardized Euclidean Distance in Fourier space 
@@ -77,19 +77,15 @@ def print_and_save_neighbours(dataset, param_arr, star_label, target_R21, target
         var_phi21 = var_phi21 if var_phi21 > 0 else 1.0
         var_R31 = var_R31 if var_R31 > 0 else 1.0
         var_phi31 = var_phi31 if var_phi31 > 0 else 1.0
-        df_filtered['FOURIER_DIST'] = fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, target_R21, target_R31, df_filtered)
-        df_filtered['FOURIER_DIST'] = np.sqrt(
-            ((df_filtered['R21'] - target_R21)**2) / var_R21 + 
-            ((wrap_phi21)**2) / var_phi21 +
-            ((df_filtered['R31'] - target_R31)**2) / var_R31 + 
-            ((wrap_phi31)**2) / var_phi31
-        )
 
-        best_matches = df_filtered.sort_values('FOURIER_DIST').head(TOP_N)
-        with open("config.toml", "a", encoding="utf-8") as config:
+        df_filtered_copy = df_filtered.copy() 
+        df_filtered_copy['FOURIER_DIST'] = fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, target_R21, target_R31, df_filtered)
+
+        best_matches = df_filtered_copy.sort_values('FOURIER_DIST').head(TOP_N)
+        with open(savefile, "a", encoding="utf-8") as config:
             for i in range(len(best_matches)):
                 match = best_matches.iloc[i]
-                config.write(f"\n[[SAVED_STAR_PARAMS]] # TARGET: {star_label} | TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
+                config.write(f"\n[[{label}]] # TARGET: {star_label} | TOP {i} | DIST: {match['FOURIER_DIST']}\n") 
                 for j in param_arr:
                     config.write(f"{j} = {match[j]}\n")
 
@@ -97,7 +93,7 @@ def print_and_save_neighbours(dataset, param_arr, star_label, target_R21, target
         print(f"TARGET STAR FOURIER FEATURES: 'R21': {target_R21}, 'phi21': {target_phi21}, 'R31': {target_R31}, 'phi31': {target_phi31}")
         print(f"=== TOP {TOP_N} NEAREST NEIGHBOURS ===\n")
         print(best_matches[['alpha', 'mu', 'gamma', 'p', 's', 'R21', 'phi21', 'R31', 'phi31', 'FOURIER_DIST']], "\n")
-        print(f"{TOP_N} NEAREST NEIGHBOUR PARAMS SAVED TO CONFIG\n")
+        print(f"{TOP_N} NEAREST NEIGHBOUR PARAMS SAVED TO .TOML FILE\n")
 
 
 def parse_log_file(filepath="sim_results_space.txt", FILTER_DIVERGENT=True):
@@ -272,6 +268,7 @@ def main():
 
     # TEST STARS PARAMETERS
     PLOT_TEST_STARS = True
+    PLOT_TARGET_STARS = False
 
     # TARGET_STARS = [{'STAR_LABEL': 'OGLE-LMC-RRLYR-00002', 'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168}
     #                 ,{'STAR_LABEL': 'OGLE-LMC-RRLYR-24912', 'R21': 0.129, 'phi21': 0.334, 'R31': 0.077, 'phi31': 0.952}
@@ -345,26 +342,15 @@ def main():
             try:
                 with open("test_stars.toml", "rb") as test_config:
                     test_stars_data = tomllib.load(test_config)
-                    test_stars_params = test_stars_data.get("SAVED_PARAMS", [])
+                    test_stars_params = test_stars_data.get("TEST_STAR", [])
                     TEST_STARS = []
-                    INIT_XYZ        = config.get("INIT_XYZ", [0.1, 0.0, 0.0])
-                    DT              = config.get("DT", 0.01)
-                    T_SKIP          = config.get("T_SKIP", 500)
-                    T_END           = config.get("T_END", 1000)
-                    CUTOFF          = config.get("CUTOFF", 1e6)
                     if test_stars_params:
                         print("=== Extracting Fourier Features for Test Stars ===\n")
                         for i, params in enumerate(test_stars_params):
-                            print(f"Simulating test star nr.: {i}")
-                            x, _, _ = com.runge_kutta_numba(params=params, init_xyz=INIT_XYZ, dt_eval=DT, t_skip=T_SKIP, t_record=T_END, cutoff=CUTOFF)
-                            if x is not None:
-                                fourier_features = com.get_fourier_features(x, dt=DT)
-                                if fourier_features:
-                                    star_data = params.copy()
-                                    star_data.update(fourier_features)
-                                    star_data['STAR_LABEL'] = f"TEST_STAR_{i}"
-                                    star_data['INDEX'] = i
-                                    TEST_STARS.append(star_data)
+                            star_data = params.copy()
+                            star_data['STAR_LABEL'] = f"TEST_STAR_{i}"
+                            star_data['INDEX'] = i
+                            TEST_STARS.append(star_data)
                         print(f"Successfully processed {len(TEST_STARS)} test stars.\n")
                     else:
                         TEST_STARS = None
@@ -383,57 +369,51 @@ def main():
                                                   , scaler=scaler
                                                   , test_stars=TEST_STARS
                                                   )
+                
                 for test_star in TEST_STARS:
                     idx = test_star['INDEX']
+                    label = f"TEST_STAR_{idx+1}_NEIGHBOUR"
                     print(f"Finding neighbours for test star nr.: {idx}")
-                    
-                    diff_phi21 = np.abs(df_filtered['phi21'] - test_star['phi21'])
-                    wrap_phi21 = np.minimum(diff_phi21, 2*np.pi - diff_phi21)
-                    
-                    diff_phi31 = np.abs(df_filtered['phi31'] - test_star.get('phi31', 0))
-                    wrap_phi31 = np.minimum(diff_phi31, 2*np.pi - diff_phi31)
-                    
-                    var_R21 = df_filtered['R21'].var() if df_filtered['R21'].var() > 0 else 1
-                    var_phi21 = df_filtered['phi21'].var() if df_filtered['phi21'].var() > 0 else 1
-                    var_R31 = df_filtered['R31'].var() if df_filtered['R31'].var() > 0 else 1
-                    var_phi31 = df_filtered['phi31'].var() if df_filtered['phi31'].var() > 0 else 1
-                    
-                    df_filtered_copy = df_filtered.copy()                 
-                    df_filtered_copy['FOURIER_DIST'] = fourier_distance(var_R21, var_R31, var_phi21, var_phi31, wrap_phi21, wrap_phi31, test_star['R21'], test_star['R31'], df_filtered_copy)
-                    best_matches = df_filtered_copy.sort_values('FOURIER_DIST').head(TOP_NEIGH)
-                    with open("test_stars.toml", "a", encoding="utf-8") as tconf:
-                        for i in range(len(best_matches)):
-                            match = best_matches.iloc[i]
-                            tconf.write(f"\n[[TEST_STAR_{idx}_NEIGHBOUR]] # DIST: {match['FOURIER_DIST']}\n")
-                            for param in param_arr:
-                                tconf.write(f"{param} = {match[param]}\n")
+                    print_and_save_neighbours(savefile='test_stars.toml'
+                                            , label=label
+                                            , dataset=dataset
+                                            , param_arr=param_arr
+                                            , star_label=test_star['STAR_LABEL']
+                                            , target_R21=test_star['R21']
+                                            , target_phi21=test_star['phi21']
+                                            , target_R31=test_star.get('R31', 0)
+                                            , target_phi31=test_star.get('phi31', 0)
+                                            , TOP_N=TOP_NEIGH
+                                            )
 
-
-        for target_star in TARGET_STARS:
-            print(f"PROCESSING TARGET STAR: {target_star['STAR_LABEL']}")
-            com.plot_fourier_space(X_umap = X_umap_cached
-                                  , df_states=df_filtered['State']
-                                  , df_params = df_filtered[param_arr]
-                                  , df_features = df_filtered[features]
-                                  , reducer=reducer
-                                  , scaler=scaler
-                                  , target_R21=target_star['R21']
-                                  , target_phi21=target_star['phi21']
-                                  , target_R31=target_star.get('R31', 0)
-                                  , target_phi31=target_star.get('phi31', 0)
-                                  , model_label=MODEL_LABEL
-                                  , star_label=target_star['STAR_LABEL']
-                                  )
-
-            print_and_save_neighbours(dataset=dataset
-                                    , param_arr=param_arr
-                                    , star_label=target_star['STAR_LABEL']
+        if PLOT_TARGET_STARS:
+            for target_star in TARGET_STARS:
+                print(f"PROCESSING TARGET STAR: {target_star['STAR_LABEL']}")
+                com.plot_fourier_space(X_umap = X_umap_cached
+                                    , df_states=df_filtered['State']
+                                    , df_params = df_filtered[param_arr]
+                                    , df_features = df_filtered[features]
+                                    , reducer=reducer
+                                    , scaler=scaler
                                     , target_R21=target_star['R21']
                                     , target_phi21=target_star['phi21']
                                     , target_R31=target_star.get('R31', 0)
                                     , target_phi31=target_star.get('phi31', 0)
-                                    , TOP_N=TOP_NEIGH
+                                    , model_label=MODEL_LABEL
+                                    , star_label=target_star['STAR_LABEL']
                                     )
+
+                print_and_save_neighbours(savefile="config.toml"
+                                        , label="SAVED_STAR_PARAMS"
+                                        , dataset=dataset
+                                        , param_arr=param_arr
+                                        , star_label=target_star['STAR_LABEL']
+                                        , target_R21=target_star['R21']
+                                        , target_phi21=target_star['phi21']
+                                        , target_R31=target_star.get('R31', 0)
+                                        , target_phi31=target_star.get('phi31', 0)
+                                        , TOP_N=TOP_NEIGH
+                                        )
     if PLOT_EMPIRICAL_SPACE:
         plot_empirical_over_simulated_fourier(dataset=dataset
                                               , filepath="ogle_stars.txt"

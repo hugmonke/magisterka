@@ -2,3 +2,7 @@ IMAGES/
 __pycache__/
 OLD/
 sim_results_space.txt
+test_stars.toml
+test_stars.txt
+found_trajectories.toml
+simulation_results.txt

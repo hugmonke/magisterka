@@ -619,11 +619,41 @@ def plot_test_stars_fourier_space(X_umap, df_states, df_params, df_features, red
     colors = df_states.map(color_map).fillna('black').tolist()
     sc = ax.scatter(X_umap[:, 0], X_umap[:, 1], c=colors, alpha=0.5, s=10, picker=True, pickradius=5)
 
+    test_star_scatters = []
+    test_star_labels = []
+    
     for i, test_star in enumerate(test_stars):
         fourier_features = np.array([[test_star['R21'], test_star['phi21'], test_star.get('R31', 0), test_star.get('phi31', 0)]])
         test_star_umap = reducer.transform(scaler.transform(fourier_features))
-        ax.scatter(test_star_umap[:, 0], test_star_umap[:, 1], c='cyan', marker='*', s=300, edgecolor='black', zorder=6, label=test_star.get('STAR_LABEL', f'TEST_STAR_{i}'))
 
+        label = test_star.get('STAR_LABEL', f'TEST_STAR_{i}')
+
+        scatter = ax.scatter(test_star_umap[:, 0], test_star_umap[:, 1], c='cyan', marker='*', s=300, edgecolor='black', zorder=6)
+        test_star_scatters.append(scatter)
+        test_star_labels.append(label)
+    annotate = ax.annotate("", xy=(0,0), xytext=(10,10), textcoords="offset points"
+                        , bbox=dict(boxstyle="round,pad=0.4", fc="lightyellow", ec="black", lw=1)
+                        , arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=0"))
+    annotate.set_visible(False)
+
+    def hover(event):
+        vis = annotate.get_visible()
+        if event.inaxes == ax:
+            for scatter, lbl in zip(test_star_scatters, test_star_labels):
+                contains, idx = scatter.contains(event)
+
+                if contains:
+                    pos = scatter.get_offsets()[idx["ind"][0]]
+                    annotate.xy = pos
+                    annotate.set_text(lbl)
+                    annotate.set_visible(True)
+                    fig.canvas.draw_idle()
+                    return 
+
+        if vis:
+            annotate.set_visible(False)
+            fig.canvas.draw_idle()
+    fig.canvas.mpl_connect("motion_notify_event", hover)
     handles, labels = plt.gca().get_legend_handles_labels()
     by_label = dict(zip(labels, handles))
 

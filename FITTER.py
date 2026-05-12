@@ -172,7 +172,7 @@ def find_test(dt, t_skip, t_end, cutoff, param_arr, spread, bounds, maxiter, pop
     try:
         with open("test_stars.toml", "rb") as test_config:
             test_stars_data = tomllib.load(test_config)
-            raw_test_stars = test_stars_data.get("SAVED_PARAMS", [])
+            raw_test_stars = test_stars_data.get("TEST_STAR", [])
     except FileNotFoundError:
         raw_test_stars = False
     if raw_test_stars:
@@ -180,14 +180,36 @@ def find_test(dt, t_skip, t_end, cutoff, param_arr, spread, bounds, maxiter, pop
         found_count = 0
         
         for i, test_params in enumerate(raw_test_stars):
-            test_star_label = f'Test_Star_{i}'
+            test_star_label = f'Test_Star_{i+1}'
             print(f">>> Fitting {test_star_label}")
-            
-            target_features = {'R21': test_params['R21']
-                               , 'phi21': test_params['phi21']
-                               , 'R31': test_params.get('R31', 0.0)
-                               , 'phi31': test_params.get('phi31', 0.0)
-                               }
+            print(f"Parameteres: {test_params}")
+            # ==================================================================================
+            # We dont need to do it once again, just get fourier features from MAP_MAKER
+            is_valid, x_target, _, _ = com.get_trajectory_numba(init_xyz=(0.1, 0.0, 0.0)
+                                                                , alpha=test_params['alpha']
+                                                                , mu=test_params['mu']
+                                                                , gamma=test_params['gamma']
+                                                                , p=test_params['p']
+                                                                , s=test_params['s']
+                                                                , dt=dt
+                                                                , t_skip=t_skip
+                                                                , t_end=t_end
+                                                                , cutoff=cutoff
+                                                                )
+            if not is_valid:
+                print(f"SKIPPED: Parameters for {test_star_label} diverged.\n")
+                continue
+
+            target_features = com.get_fourier_features(x_target, dt=dt)
+            if not target_features:
+                print(f"SKIPPED: Could not extract Fourier features for {test_star_label}.\n")
+                continue
+            # ==================================================================================
+            print(f"Extracted features for {test_star_label}: \
+                  R21 = {target_features['R21']} \
+                , phi21 = {target_features['phi21']} \
+                , R31 = {target_features.get('R31', 0.0)} \
+                , phi31 = {target_features.get('phi31', 0.0)}")
             
             neighbours_list = test_stars_data.get(f"TEST_STAR_{i}_NEIGHBOUR", [{}])
             if neighbours_list and neighbours_list[0]:
@@ -198,7 +220,7 @@ def find_test(dt, t_skip, t_end, cutoff, param_arr, spread, bounds, maxiter, pop
                     benchmark_bounds.append((max(bound_min, guess - range_span * spread), min(bound_max, guess + range_span * spread)))
             else:
                 benchmark_bounds = bounds
-
+            print(f"Performing differential evolution on {test_star_label}\n")
             result = differential_evolution(func=cost_function
                                             , bounds=benchmark_bounds
                                             , args=(target_features, param_arr, dt, t_skip, t_end, cutoff)
@@ -216,18 +238,22 @@ def find_test(dt, t_skip, t_end, cutoff, param_arr, spread, bounds, maxiter, pop
                                             )
             
             if result.fun <= fit_threshold:
-                print(f"TRAJECTORY FOUND! Final Error: {result.fun}")
+                print(f"GOOD TRAJECTORY FOUND! Final Error: {result.fun}\n")
                 found_count += 1
                 best_params = {name: val for name, val in zip(param_arr, result.x)}
 
                 with open("test_stars.toml", "a", encoding="utf-8") as tconf:
-                    tconf.write(f"\n[[TEST_STAR_{i}_RECOVERED]] # ERROR: {result.fun}\n")
+                    tconf.write(f"[[TEST_STAR_{i}_RECOVERED]] # ERROR: {result.fun}\n")
                     for p_key, p_val in best_params.items():
                         tconf.write(f"{p_key} = {p_val}\n")
             else:
-                print(f"TRAJECTORY NOT FOUND. Final Error: {result.fun}")
-                
-        print(f"\n==========================================")
+                print(f"NO GOOD TRAJECTORY FOUND. Final Error: {result.fun}\n")
+                with open("test_stars.toml", "a", encoding="utf-8") as tconf:
+                    tconf.write(f"[[TEST_STAR_{i}_RECOVERED]] # BAD FIT | ERROR: {result.fun}\n")
+                    for p_key, p_val in best_params.items():
+                        tconf.write(f"{p_key} = {p_val}\n")
+
+        print(f"==========================================")
         print(f"BENCHMARK COMPLETE: Found {found_count} out of {len(raw_test_stars)} stars.")
         print(f"==========================================")
     else:
@@ -265,9 +291,9 @@ def main():
     REAL_PARAMS     = config.get("SAVED_STAR_PARAMS", [{}])[0]
     FIT_THRESHOLD   = config.get("FIT_TRESHOLD", 0.01)
     FIND_TEST = True
-    FIND_REAL = True
+    FIND_REAL = False
     PARAM_ARR       = ['alpha', 'mu', 'gamma', 'p', 's']
-    MAP_MAKER_GUESS = [REAL_PARAMS[k] for k in PARAM_ARR]
+    
     # OGLE_TARGETS    = {"R21": 0.367, "phi21": 5.342, "R31": 0.184, "phi31": 3.578}
     # OGLE_TARGETS    = {'R21': 0.447, 'phi21': 4.738, 'R31': 0.206, 'phi31': 3.168} #00002
     OGLE_TARGETS    = {'R21': 0.179, 'phi21': 0.596, 'R31': 0.055, 'phi31': 0.818} #36125
@@ -289,7 +315,7 @@ def main():
         print("=== REAL DATASET: Tanaka-Takeuti Inverse Problem ===")
         print(f"Targeting OGLE RRab: R21={OGLE_TARGETS['R21']}, phi21={OGLE_TARGETS['phi21']}, R31={OGLE_TARGETS.get(('R31'), None)}, phi31={OGLE_TARGETS.get(('phi31'), None)}")
         print(f"Looking around parameters: {REAL_PARAMS}")
-
+        MAP_MAKER_GUESS = [REAL_PARAMS[k] for k in PARAM_ARR]
         tight_bounds = []
         for guess, (bound_min, bound_max) in zip(MAP_MAKER_GUESS, BOUNDS):
             range_span = bound_max - bound_min

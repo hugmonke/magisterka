@@ -32,9 +32,9 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
     overflow_count = 0
     results = []
     
-    with open(filename, "a", encoding="utf-8") as file:
+    with open(filename, "a", encoding="utf-8") as simfile:
         total_sim = 0
-        print("Calculating trajectories and entropy, saving results to sim_results_space.txt")
+        print(f"Calculating trajectories and entropy, saving results to {filename}")
         if params is None or params == {}:
             master_params = com.get_parameteres(size=sim_num)
         else:
@@ -44,8 +44,6 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
             cur_size = min(batch_size, sim_num - total_sim)
             batch_params = {k: v[total_sim : total_sim + cur_size] for k, v in master_params.items()}
 
-            cur_size = min(batch_size, sim_num - total_sim)
-            params = com.get_parameteres(size=cur_size)
             lle_all, valid_mask, x_all, y_all, z_all = com.solve_and_get_lle(init_xyz = init_xyz
                                                                             , params = batch_params
                                                                             , dt = dt
@@ -54,10 +52,10 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
                                                                             , size = cur_size
                                                                             , cutoff= cutoff
                                                                             )
-        
+            star_counter = 0
             for i in range(cur_size):
                 no_trajectory = i + total_sim
-                run_data = {param: val[i] for param, val in params.items()}
+                run_data = {param: val[i] for param, val in batch_params.items()}
                 param_string = ", ".join([f"'{param}': {val}" for param, val in run_data.items()])
                 R21, PHI21, R31, PHI31 = np.nan, np.nan, np.nan, np.nan
                 if not valid_mask[i]:
@@ -86,16 +84,27 @@ def generate_dataset(filename, sim_num = 1000, print_every = 50, init_xyz = (0.1
 
                     run_data.update({"Entropy": entropy, "LLE": lle, "State": state, "R21": R21, "phi21": PHI21, "R31": R31, "phi31": PHI31})
                 results.append(run_data)
-                log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | R21: {R21:>6.3f} | phi21: {PHI21:>6.3f} | R31: {R31:>6.3f} | phi31: {PHI31:>6.3f} | T_SKIP: {t_skip} | T_END: {t_end}\n"
-                file.write(log_line)
-                if (no_trajectory+1) % print_every == 0:
-                    print(f"Run no. {no_trajectory+1} ")
+                if filename == 'test_stars.toml':
+                    if state == 'DIVERGENT' or state == 'STABLE':
+                        continue
+                    else:
+                       star_counter += 1
+                       with open(filename, "a", encoding="utf-8") as testfile:
+                        testfile.write(f"\n[[TEST_STAR]] # TEST_STAR_{star_counter} | State: {state}\n") 
+                        for param, val in run_data.items():
+                            if isinstance(val, float):
+                                testfile.write(f"{param} = {val}\n")
+                else:
+                    log_line = f"Classified State: {state:<14} | Entropy: {entropy:>7.4f} | LLE: {lle:>7.4f} | Params: {{{param_string}}} | R21: {R21:>6.3f} | phi21: {PHI21:>6.3f} | R31: {R31:>6.3f} | phi31: {PHI31:>6.3f} | T_SKIP: {t_skip} | T_END: {t_end}\n"
+                    simfile.write(log_line)
+                    if (no_trajectory+1) % print_every == 0:
+                        print(f"Run no. {no_trajectory+1} ")
             
             total_sim += cur_size
 
     print(f"Total successful runs: {len(results)}")
     print(f"Total exploded (error) runs: {overflow_count}")
-    print("-> Results saved to sim_results_space.txt")
+    print(f"-> Results saved to {filename}")
     return pd.DataFrame(results)
 
 
@@ -175,54 +184,74 @@ def main():
     PLOT_PARAM_SPACE = False
     TRAIN_CLASSIFIER = False
 
+    RUN_TEST = True
+    RUN_ALL = False
 
-    dataset = generate_dataset(filename=FILENAME
-                        , sim_num = SIM_NUM
-                        , print_every = PRINT_EVERY
-                        , init_xyz = INIT_XYZ
-                        , params = PARAMS
-                        , dt = DT
-                        , t_skip = T_SKIP
-                        , t_end = T_END
-                        , size = SIM_NUM
-                        , cutoff = CUTOFF
-                        , batch_size = BATCH_SIZE
-                        , tolerance = TOLERANCE
-                        )
-    
-    if dataset.empty or len(dataset['State'].unique()) < 2:
-        print("Not enough varied data. Increase number of simulations (sim_num).")
-        exit()
+    if RUN_TEST:
+        FILENAME = "test_stars.toml"
+        SIM_NUM = 1000
+        BATCH_SIZE = 1000
+        dataset = generate_dataset(filename=FILENAME
+                            , sim_num = SIM_NUM
+                            , print_every = PRINT_EVERY
+                            , init_xyz = INIT_XYZ
+                            , params = PARAMS
+                            , dt = DT
+                            , t_skip = T_SKIP
+                            , t_end = T_END
+                            , size = SIM_NUM
+                            , cutoff = CUTOFF
+                            , batch_size = BATCH_SIZE
+                            , tolerance = TOLERANCE
+                            )
+    if RUN_ALL:
+        dataset = generate_dataset(filename=FILENAME
+                            , sim_num = SIM_NUM
+                            , print_every = PRINT_EVERY
+                            , init_xyz = INIT_XYZ
+                            , params = PARAMS
+                            , dt = DT
+                            , t_skip = T_SKIP
+                            , t_end = T_END
+                            , size = SIM_NUM
+                            , cutoff = CUTOFF
+                            , batch_size = BATCH_SIZE
+                            , tolerance = TOLERANCE
+                            )
+        
+        if dataset.empty or len(dataset['State'].unique()) < 2:
+            print("Not enough varied data. Increase number of simulations (sim_num).")
+            exit()
 
-    priority_dict = {"DIVERGENT": 0
-                      , "STABLE": 1
-                      , "QUASI_PERIODIC": 2
-                      , "PERIODIC": 3
-                      , "CHAOTIC": 4
-                      }
-    
-    dataset['priority'] = dataset['State'].map(priority_dict).fillna(-1)
-    dataset = dataset.sort_values('priority').drop(columns=['priority']).reset_index(drop=True)
-    param_arr = ['alpha', 'mu', 'gamma', 'p', 's']
-    df_params, df_states = dataset[param_arr], dataset['State']
+        priority_dict = {"DIVERGENT": 0
+                        , "STABLE": 1
+                        , "QUASI_PERIODIC": 2
+                        , "PERIODIC": 3
+                        , "CHAOTIC": 4
+                        }
+        
+        dataset['priority'] = dataset['State'].map(priority_dict).fillna(-1)
+        dataset = dataset.sort_values('priority').drop(columns=['priority']).reset_index(drop=True)
+        param_arr = ['alpha', 'mu', 'gamma', 'p', 's']
+        df_params, df_states = dataset[param_arr], dataset['State']
 
 
-    if PLOT_PARAM_SPACE:
-        com.plot_parameter_space(df_params=df_params
+        if PLOT_PARAM_SPACE:
+            com.plot_parameter_space(df_params=df_params
+                                    , df_states=df_states
+                                    , n_neighbors=N_NEIGHBORS
+                                    , min_dist=MIN_DIST
+                                    , random_state=RANDOM_STATE
+                                    )
+        
+        if TRAIN_CLASSIFIER:
+            train_rf_classifier(df_params=df_params
                                 , df_states=df_states
-                                , n_neighbors=N_NEIGHBORS
-                                , min_dist=MIN_DIST
+                                , features=param_arr
+                                , n_estimators=N_ESTIMATORS
+                                , test_size=TEST_SIZE
                                 , random_state=RANDOM_STATE
                                 )
-    
-    if TRAIN_CLASSIFIER:
-        train_rf_classifier(df_params=df_params
-                            , df_states=df_states
-                            , features=param_arr
-                            , n_estimators=N_ESTIMATORS
-                            , test_size=TEST_SIZE
-                            , random_state=RANDOM_STATE
-                            )
 
 
 
